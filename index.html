@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Talleres · 1era Jornada Nacional de Donación y Trasplante INCUCAI</title>
+<style>
+  :root {
+    --azul: #2B3A67;
+    --dorado: #E3B868;
+    --fondo: #F5F6FA;
+    --texto: #1E2233;
+    --gris: #767B94;
+    --gris-claro: #E3E5EE;
+    --rojo: #C0392B;
+    --verde: #1E8A4C;
+    --blanco: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--fondo);
+    color: var(--texto);
+    line-height: 1.4;
+    padding-bottom: 24px;
+  }
+  header.app-header {
+    background: var(--azul);
+    color: var(--blanco);
+    padding: 18px 16px;
+    text-align: center;
+  }
+  header.app-header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  header.app-header p {
+    font-size: 13px;
+    color: var(--dorado);
+    font-weight: 600;
+  }
+  nav.tabs {
+    display: flex;
+    background: var(--blanco);
+    border-bottom: 2px solid var(--gris-claro);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  nav.tabs button {
+    flex: 1;
+    padding: 14px 8px;
+    background: none;
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--gris);
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+  }
+  nav.tabs button.activo {
+    color: var(--azul);
+    border-bottom-color: var(--dorado);
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .tab-panel { display: none; }
+  .tab-panel.activo { display: block; }
+
+  .aviso-cerrado {
+    background: #FDEDEC;
+    border: 1px solid var(--rojo);
+    color: var(--rojo);
+    padding: 16px;
+    border-radius: 10px;
+    text-align: center;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .card {
+    background: var(--blanco);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card h2 {
+    font-size: 15px;
+    color: var(--azul);
+    margin-bottom: 12px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--texto);
+    margin-bottom: 4px;
+    margin-top: 12px;
+  }
+  label:first-child { margin-top: 0; }
+  input[type="text"], input[type="email"], input[type="tel"], select {
+    width: 100%;
+    padding: 12px;
+    border: 1.5px solid var(--gris-claro);
+    border-radius: 8px;
+    font-size: 16px;
+    background: var(--blanco);
+    color: var(--texto);
+  }
+  input:focus, select:focus { outline: 2px solid var(--dorado); border-color: var(--dorado); }
+  .fila-2 { display: flex; gap: 10px; }
+  .fila-2 > div { flex: 1; }
+
+  .dia-titulo {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--azul);
+    margin: 20px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 2px solid var(--dorado);
+  }
+  .dia-titulo:first-child { margin-top: 0; }
+  .taller-grupo { margin-bottom: 14px; }
+  .taller-nombre { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+  .turno-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1.5px solid var(--gris-claro);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .turno-item.seleccionado { border-color: var(--dorado); background: #FFF9EE; }
+  .turno-item.deshabilitado { opacity: 0.55; cursor: not-allowed; }
+  .turno-item input[type="checkbox"] { width: 20px; height: 20px; flex-shrink: 0; }
+  .turno-info { flex: 1; min-width: 0; }
+  .turno-horario { font-size: 14px; font-weight: 600; }
+  .turno-aula { font-size: 12px; color: var(--gris); }
+  .turno-cupo { font-size: 12px; font-weight: 700; color: var(--verde); }
+  .turno-cupo.bajo { color: var(--rojo); }
+  .turno-motivo { font-size: 11px; color: var(--gris); margin-top: 2px; }
+  .etiqueta-ya {
+    display: inline-block;
+    background: var(--azul);
+    color: var(--blanco);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+
+  .check-row { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0; }
+  .check-row input[type="checkbox"] { width: 22px; height: 22px; flex-shrink: 0; margin-top: 1px; }
+  .check-row span { font-size: 13px; color: var(--texto); }
+
+  button.btn-principal {
+    width: 100%;
+    padding: 15px;
+    background: var(--azul);
+    color: var(--blanco);
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+  button.btn-principal:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.btn-secundario {
+    width: 100%;
+    padding: 12px;
+    background: none;
+    color: var(--rojo);
+    border: 1.5px solid var(--rojo);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .mensaje { padding: 12px 14px; border-radius: 8px; font-size: 13px; margin: 10px 0; font-weight: 500; }
+  .mensaje.info { background: #EAF0FB; color: var(--azul); }
+  .mensaje.ok { background: #E9F7EF; color: var(--verde); }
+  .mensaje.error { background: #FDEDEC; color: var(--rojo); }
+
+  .resultado-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .resultado-item.ok { background: #E9F7EF; color: var(--verde); }
+  .resultado-item.error { background: #FDEDEC; color: var(--rojo); }
+
+  .mis-item {
+    background: var(--blanco);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .mis-item .taller { font-weight: 700; font-size: 14px; color: var(--azul); }
+  .mis-item .detalle { font-size: 13px; color: var(--gris); margin: 4px 0 10px; }
+  .vacio { text-align: center; color: var(--gris); font-size: 13px; padding: 24px 0; }
+  .cargando { text-align: center; color: var(--gris); font-size: 13px; padding: 24px 0; }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>Talleres simultáneos · 1era Jornada Nacional de Donación y Trasplante</h1>
+  <p>14 y 15 de octubre 2026 · Centro Cultural de la Ciencia</p>
+</header>
+
+<nav class="tabs">
+  <button id="tab-btn-inscribirme" class="activo">Inscribirme</button>
+  <button id="tab-btn-mis">Mis inscripciones / Anular</button>
+</nav>
+
+<main>
+  <div id="aviso-cerrado" class="aviso-cerrado" style="display:none">Las inscripciones están cerradas.</div>
+
+  <section id="tab-inscribirme" class="tab-panel activo">
+    <div class="card">
+      <h2>Tus datos</h2>
+      <label for="in-dni">DNI</label>
+      <input type="text" id="in-dni" inputmode="numeric" placeholder="Sin puntos, ej: 30123456" maxlength="8">
+
+      <label for="in-email">Email</label>
+      <input type="email" id="in-email" placeholder="tuemail@ejemplo.com">
+
+      <label for="in-email2">Confirmar email</label>
+      <input type="email" id="in-email2" placeholder="Repetí tu email">
+
+      <div class="fila-2">
+        <div>
+          <label for="in-nombre">Nombre</label>
+          <input type="text" id="in-nombre">
+        </div>
+        <div>
+          <label for="in-apellido">Apellido</label>
+          <input type="text" id="in-apellido">
+        </div>
+      </div>
+
+      <label for="in-profesion">Profesión</label>
+      <select id="in-profesion">
+        <option value="">Elegí una opción</option>
+        <option>Médico/a</option>
+        <option>Enfermero/a</option>
+        <option>Licenciado/a en Kinesiología</option>
+        <option>Trabajador/a social</option>
+        <option>Psicólogo/a</option>
+        <option>Bioquímico/a</option>
+        <option>Técnico/a</option>
+        <option>Otro</option>
+      </select>
+
+      <label for="in-institucion">Institución</label>
+      <input type="text" id="in-institucion">
+
+      <label for="in-provincia">Provincia</label>
+      <select id="in-provincia">
+        <option value="">Elegí una opción</option>
+        <option>Buenos Aires</option>
+        <option>Ciudad Autónoma de Buenos Aires</option>
+        <option>Catamarca</option>
+        <option>Chaco</option>
+        <option>Chubut</option>
+        <option>Córdoba</option>
+        <option>Corrientes</option>
+        <option>Entre Ríos</option>
+        <option>Formosa</option>
+        <option>Jujuy</option>
+        <option>La Pampa</option>
+        <option>La Rioja</option>
+        <option>Mendoza</option>
+        <option>Misiones</option>
+        <option>Neuquén</option>
+        <option>Río Negro</option>
+        <option>Salta</option>
+        <option>San Juan</option>
+        <option>San Luis</option>
+        <option>Santa Cruz</option>
+        <option>Santa Fe</option>
+        <option>Santiago del Estero</option>
+        <option>Tierra del Fuego</option>
+        <option>Tucumán</option>
+      </select>
+
+      <label for="in-celular">Celular</label>
+      <input type="tel" id="in-celular" placeholder="Ej: 1155667788">
+    </div>
+
+    <div class="card">
+      <h2>Elegí tus talleres</h2>
+      <div id="mensaje-mis" class="mensaje info" style="display:none"></div>
+      <div id="grilla-turnos"><div class="cargando">Cargando turnos...</div></div>
+    </div>
+
+    <div class="card">
+      <div class="check-row">
+        <input type="checkbox" id="in-compromiso">
+        <span>Me comprometo a asistir en el/los turno/s asignado/s. Si no puedo asistir, anularé mi inscripción para liberar el cupo.</span>
+      </div>
+      <button id="btn-inscribir" class="btn-principal">Confirmar inscripción</button>
+      <div id="resultado-inscripcion"></div>
+    </div>
+  </section>
+
+  <section id="tab-mis" class="tab-panel">
+    <div class="card">
+      <h2>Buscar mis inscripciones</h2>
+      <label for="mis-dni">DNI</label>
+      <input type="text" id="mis-dni" inputmode="numeric" placeholder="Sin puntos" maxlength="8">
+      <label for="mis-email">Email</label>
+      <input type="email" id="mis-email" placeholder="tuemail@ejemplo.com">
+      <button id="btn-buscar-mis" class="btn-principal">Buscar</button>
+    </div>
+    <div id="mensaje-buscar-mis"></div>
+    <div id="lista-mis"></div>
+  </section>
+</main>
+
+<script>
+// ================== CONFIG ==================
+const API_URL = "PEGAR_URL_APPS_SCRIPT";
+const TIMEOUT_MS = 20000;
+
+// ================== ESTADO ==================
+let turnosData = [];        // [{id, taller, aula, fecha, inicio, fin, cupo, ocupados, disponibles}]
+let misInscripciones = [];  // [{id_inscripcion, turno_id, taller, fecha, horario, aula}]
+let inscripcionAbierta = true;
+let enviando = false;
+
+// ================== UTILIDADES ==================
+
+function $(id) { return document.getElementById(id); }
+
+function normalizarDni(v) { return String(v || "").replace(/\D/g, ""); }
+function normalizarEmail(v) { return String(v || "").trim().toLowerCase(); }
+function emailValido(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+function dniValido(v) { return /^\d{7,8}$/.test(v); }
+
+function fechaCorta(iso) {
+  const p = String(iso).split("-");
+  return p[2] + "/" + p[1];
+}
+function fechaLarga(iso) {
+  const p = String(iso).split("-");
+  return p[2] + "/" + p[1] + "/" + p[0];
+}
+function horaAMinutos(hhmm) {
+  const p = String(hhmm).split(":");
+  return (+p[0]) * 60 + (+p[1]);
+}
+function seSuperponen(fechaA, iniA, finA, fechaB, iniB, finB) {
+  if (fechaA !== fechaB) return false;
+  const iA = horaAMinutos(iniA), fA = horaAMinutos(finA);
+  const iB = horaAMinutos(iniB), fB = horaAMinutos(finB);
+  return iA < fB && iB < fA;
+}
+
+/** fetch con timeout de 20s y 1 reintento automático. */
+async function fetchConReintento(url) {
+  for (let intento = 0; intento < 2; intento++) {
+    const controlador = new AbortController();
+    const timer = setTimeout(() => controlador.abort(), TIMEOUT_MS);
+    try {
+      const resp = await fetch(url, { signal: controlador.signal });
+      clearTimeout(timer);
+      return await resp.json();
+    } catch (e) {
+      clearTimeout(timer);
+      if (intento === 1) throw e;
+    }
+  }
+}
+
+function mensajeErrorRed() {
+  return "Hay mucha demanda en este momento, reintentá en unos segundos. Podés verificar si quedaste inscripto/a en \"Mis inscripciones\".";
+}
+
+function param(obj) {
+  return Object.keys(obj)
+    .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(obj[k]))
+    .join("&");
+}
+
+// ================== TABS ==================
+
+$("tab-btn-inscribirme").addEventListener("click", () => cambiarTab("inscribirme"));
+$("tab-btn-mis").addEventListener("click", () => cambiarTab("mis"));
+
+function cambiarTab(nombre) {
+  $("tab-inscribirme").classList.toggle("activo", nombre === "inscribirme");
+  $("tab-mis").classList.toggle("activo", nombre === "mis");
+  $("tab-btn-inscribirme").classList.toggle("activo", nombre === "inscribirme");
+  $("tab-btn-mis").classList.toggle("activo", nombre === "mis");
+}
+
+// ================== CARGA DE TURNOS ==================
+
+async function cargarTurnos() {
+  try {
+    const data = await fetchConReintento(API_URL + "?action=turnos");
+    if (!data.ok) {
+      $("grilla-turnos").innerHTML = '<div class="mensaje error">No se pudieron cargar los turnos.</div>';
+      return;
+    }
+    inscripcionAbierta = !!data.inscripcion_abierta;
+    turnosData = data.turnos;
+    $("aviso-cerrado").style.display = inscripcionAbierta ? "none" : "block";
+    $("btn-inscribir").style.display = inscripcionAbierta ? "block" : "none";
+    renderGrilla();
+  } catch (e) {
+    $("grilla-turnos").innerHTML = '<div class="mensaje error">' + mensajeErrorRed() + '</div>';
+  }
+}
+
+function renderGrilla() {
+  const cont = $("grilla-turnos");
+  if (turnosData.length === 0) {
+    cont.innerHTML = '<div class="vacio">No hay turnos cargados todavía.</div>';
+    return;
+  }
+  // Agrupar por fecha, luego por taller.
+  const porFecha = {};
+  turnosData.forEach((t) => {
+    if (!porFecha[t.fecha]) porFecha[t.fecha] = {};
+    if (!porFecha[t.fecha][t.taller]) porFecha[t.fecha][t.taller] = [];
+    porFecha[t.fecha][t.taller].push(t);
+  });
+
+  let html = "";
+  Object.keys(porFecha).sort().forEach((fecha) => {
+    html += '<div class="dia-titulo">' + fechaLarga(fecha) + '</div>';
+    Object.keys(porFecha[fecha]).forEach((taller) => {
+      html += '<div class="taller-grupo"><div class="taller-nombre">' + escapeHtml(taller) + '</div>';
+      porFecha[fecha][taller]
+        .sort((a, b) => a.inicio.localeCompare(b.inicio))
+        .forEach((t) => {
+          html += renderTurnoItem(t);
+        });
+      html += '</div>';
+    });
+  });
+  cont.innerHTML = html;
+
+  turnosData.forEach((t) => {
+    const chk = $("chk-" + t.id);
+    if (chk) chk.addEventListener("change", () => onToggleTurno(t.id));
+  });
+
+  actualizarEstadosGrilla();
+}
+
+function idInscritoEnTurno(turnoId) {
+  return misInscripciones.some((m) => m.turno_id === turnoId);
+}
+
+function renderTurnoItem(t) {
+  const yaInscrito = idInscritoEnTurno(t.id);
+  const completo = t.disponibles <= 0;
+  const cupoClase = t.disponibles <= 5 ? "bajo" : "";
+  const cupoTexto = completo ? "Completo" : "Quedan " + t.disponibles + " lugares";
+  return (
+    '<label class="turno-item" id="item-' + t.id + '" data-id="' + t.id + '">' +
+    '<input type="checkbox" id="chk-' + t.id + '" ' + (yaInscrito || completo ? "disabled" : "") + '>' +
+    '<div class="turno-info">' +
+    '<div class="turno-horario">' + t.inicio + ' a ' + t.fin + ' · ' + escapeHtml(t.aula) + '</div>' +
+    (yaInscrito
+      ? '<span class="etiqueta-ya">Ya inscripto/a</span>'
+      : '<div class="turno-cupo ' + cupoClase + '">' + cupoTexto + '</div>') +
+    '<div class="turno-motivo" id="motivo-' + t.id + '"></div>' +
+    '</div>' +
+    '</label>'
+  );
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ================== SELECCIÓN / CONFLICTOS EN VIVO ==================
+
+function turnosSeleccionados() {
+  return turnosData.filter((t) => {
+    const chk = $("chk-" + t.id);
+    return chk && chk.checked;
+  });
+}
+
+function onToggleTurno(turnoId) {
+  actualizarEstadosGrilla();
+}
+
+/** Solo UX: recalcula qué turnos quedan deshabilitados por conflicto con
+ * lo ya tildado o con lo que la persona ya tiene inscripto. El servidor
+ * vuelve a validar todo esto de cero al inscribir. */
+function actualizarEstadosGrilla() {
+  const seleccionados = turnosSeleccionados();
+
+  turnosData.forEach((t) => {
+    const chk = $("chk-" + t.id);
+    const item = $("item-" + t.id);
+    const motivoEl = $("motivo-" + t.id);
+    if (!chk || !item) return;
+
+    const yaInscrito = idInscritoEnTurno(t.id);
+    const completo = t.disponibles <= 0;
+
+    if (yaInscrito) {
+      item.classList.add("deshabilitado");
+      motivoEl.textContent = "";
+      return;
+    }
+    if (chk.checked) {
+      item.classList.remove("deshabilitado");
+      item.classList.add("seleccionado");
+      motivoEl.textContent = "";
+      return;
+    }
+    item.classList.remove("seleccionado");
+
+    if (completo) {
+      item.classList.add("deshabilitado");
+      chk.disabled = true;
+      motivoEl.textContent = "";
+      return;
+    }
+
+    // Mismo taller ya inscripto (existente).
+    const conflictoTaller = misInscripciones.find((m) => m.taller === t.taller);
+    if (conflictoTaller) {
+      item.classList.add("deshabilitado");
+      chk.disabled = true;
+      motivoEl.textContent = "Ya tenés un turno de este taller (" + conflictoTaller.horario + ").";
+      return;
+    }
+
+    // Mismo taller ya tildado en esta selección.
+    const mismoTallerTildado = seleccionados.find((s) => s.taller === t.taller && s.id !== t.id);
+    if (mismoTallerTildado) {
+      item.classList.add("deshabilitado");
+      chk.disabled = true;
+      motivoEl.textContent = "Ya elegiste otro turno de este taller.";
+      return;
+    }
+
+    // Superposición horaria con existentes o tildados.
+    const refs = misInscripciones
+      .map((m) => {
+        const partes = String(m.horario).split("-");
+        return { taller: m.taller, fecha: m.fecha, inicio: partes[0], fin: partes[1] };
+      })
+      .concat(seleccionados.filter((s) => s.id !== t.id));
+    const conflictoHorario = refs.find((r) => seSuperponen(t.fecha, t.inicio, t.fin, r.fecha, r.inicio, r.fin));
+    if (conflictoHorario) {
+      item.classList.add("deshabilitado");
+      chk.disabled = true;
+      motivoEl.textContent = "Se superpone con " + conflictoHorario.taller + " (" + conflictoHorario.inicio + " a " + conflictoHorario.fin + ").";
+      return;
+    }
+
+    item.classList.remove("deshabilitado");
+    chk.disabled = false;
+    motivoEl.textContent = "";
+  });
+}
+
+// ================== "MIS" (para marcar ya-inscripto en la grilla) ==================
+
+async function actualizarMisSiCorresponde() {
+  const dni = normalizarDni($("in-dni").value);
+  const email = normalizarEmail($("in-email").value);
+  if (!dniValido(dni) || !emailValido(email)) {
+    misInscripciones = [];
+    actualizarEstadosGrilla();
+    return;
+  }
+  $("mensaje-mis").style.display = "block";
+  $("mensaje-mis").className = "mensaje info";
+  $("mensaje-mis").textContent = "Buscando tus inscripciones...";
+  try {
+    const data = await fetchConReintento(API_URL + "?" + param({ action: "mis", dni: dni, email: email }));
+    if (data.ok) {
+      misInscripciones = data.mis;
+      $("mensaje-mis").style.display = "none";
+    } else {
+      misInscripciones = [];
+      $("mensaje-mis").className = "mensaje error";
+      $("mensaje-mis").textContent = data.error || "No se pudo verificar tu inscripción.";
+    }
+  } catch (e) {
+    misInscripciones = [];
+    $("mensaje-mis").className = "mensaje error";
+    $("mensaje-mis").textContent = mensajeErrorRed();
+  }
+  renderGrilla();
+}
+
+let temporizadorMis = null;
+function programarActualizarMis() {
+  clearTimeout(temporizadorMis);
+  temporizadorMis = setTimeout(actualizarMisSiCorresponde, 500);
+}
+$("in-dni").addEventListener("input", programarActualizarMis);
+$("in-email").addEventListener("input", programarActualizarMis);
+
+// ================== INSCRIBIR ==================
+
+$("btn-inscribir").addEventListener("click", onInscribir);
+
+function validarFormulario() {
+  const dni = normalizarDni($("in-dni").value);
+  const email = normalizarEmail($("in-email").value);
+  const email2 = normalizarEmail($("in-email2").value);
+
+  if (!dniValido(dni)) return "El DNI debe tener 7 u 8 dígitos, sin puntos.";
+  if (!emailValido(email)) return "El email no es válido.";
+  if (email !== email2) return "Los emails no coinciden.";
+  if (!$("in-nombre").value.trim()) return "Falta tu nombre.";
+  if (!$("in-apellido").value.trim()) return "Falta tu apellido.";
+  if (!$("in-profesion").value) return "Elegí tu profesión.";
+  if (!$("in-institucion").value.trim()) return "Falta tu institución.";
+  if (!$("in-provincia").value) return "Elegí tu provincia.";
+  if (!$("in-celular").value.trim()) return "Falta tu celular.";
+  if (turnosSeleccionados().length === 0) return "Elegí al menos un turno.";
+  if (!$("in-compromiso").checked) return "Tenés que aceptar el compromiso de asistencia.";
+  return null;
+}
+
+async function onInscribir() {
+  if (enviando) return;
+  const errorLocal = validarFormulario();
+  const resultadoEl = $("resultado-inscripcion");
+  if (errorLocal) {
+    resultadoEl.innerHTML = '<div class="mensaje error">' + errorLocal + '</div>';
+    return;
+  }
+
+  enviando = true;
+  $("btn-inscribir").disabled = true;
+  $("btn-inscribir").textContent = "Enviando...";
+  resultadoEl.innerHTML = '<div class="mensaje info">Enviando tu inscripción...</div>';
+
+  const datos = {
+    action: "inscribir",
+    dni: normalizarDni($("in-dni").value),
+    email: normalizarEmail($("in-email").value),
+    nombre: $("in-nombre").value.trim(),
+    apellido: $("in-apellido").value.trim(),
+    profesion: $("in-profesion").value,
+    institucion: $("in-institucion").value.trim(),
+    provincia: $("in-provincia").value,
+    celular: $("in-celular").value.trim(),
+    turnos: turnosSeleccionados().map((t) => t.id).join(","),
+    compromiso: "SI"
+  };
+
+  try {
+    const data = await fetchConReintento(API_URL + "?" + param(datos));
+    if (!data.ok) {
+      resultadoEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo procesar la inscripción.") + '</div>';
+    } else {
+      let html = "";
+      data.inscriptos.forEach((i) => {
+        html += '<div class="resultado-item ok">✓ Inscripto/a en ' + escapeHtml(i.taller) + ' (' + fechaCorta(i.fecha) + ', ' + escapeHtml(i.horario) + ')</div>';
+      });
+      data.rechazados.forEach((r) => {
+        const turno = turnosData.find((t) => t.id === r.turno_id);
+        const nombreTaller = turno ? turno.taller : r.turno_id;
+        html += '<div class="resultado-item error">✗ ' + escapeHtml(nombreTaller) + ': ' + escapeHtml(r.motivo) + '</div>';
+      });
+      resultadoEl.innerHTML = html;
+      misInscripciones = data.mis;
+      guardarLocalStorage();
+    }
+  } catch (e) {
+    resultadoEl.innerHTML = '<div class="mensaje error">' + mensajeErrorRed() + '</div>';
+  } finally {
+    enviando = false;
+    $("btn-inscribir").disabled = false;
+    $("btn-inscribir").textContent = "Confirmar inscripción";
+    await cargarTurnos();
+  }
+}
+
+// ================== MIS INSCRIPCIONES / ANULAR ==================
+
+$("btn-buscar-mis").addEventListener("click", buscarMisInscripciones);
+
+async function buscarMisInscripciones() {
+  const dni = normalizarDni($("mis-dni").value);
+  const email = normalizarEmail($("mis-email").value);
+  const msgEl = $("mensaje-buscar-mis");
+  const listaEl = $("lista-mis");
+
+  if (!dniValido(dni) || !emailValido(email)) {
+    msgEl.innerHTML = '<div class="mensaje error">Ingresá un DNI y un email válidos.</div>';
+    return;
+  }
+
+  msgEl.innerHTML = '<div class="mensaje info">Buscando...</div>';
+  listaEl.innerHTML = "";
+
+  try {
+    const data = await fetchConReintento(API_URL + "?" + param({ action: "mis", dni: dni, email: email }));
+    if (!data.ok) {
+      msgEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo buscar.") + '</div>';
+      return;
+    }
+    msgEl.innerHTML = "";
+    guardarLocalStorage(dni, email);
+    renderListaMis(data.mis, dni, email);
+  } catch (e) {
+    msgEl.innerHTML = '<div class="mensaje error">' + mensajeErrorRed() + '</div>';
+  }
+}
+
+function renderListaMis(lista, dni, email) {
+  const listaEl = $("lista-mis");
+  if (lista.length === 0) {
+    listaEl.innerHTML = '<div class="vacio">No tenés inscripciones activas.</div>';
+    return;
+  }
+  listaEl.innerHTML = lista
+    .map(
+      (i) =>
+        '<div class="mis-item">' +
+        '<div class="taller">' + escapeHtml(i.taller) + '</div>' +
+        '<div class="detalle">' + fechaLarga(i.fecha) + ' · ' + escapeHtml(i.horario) + ' · ' + escapeHtml(i.aula) + '</div>' +
+        '<button class="btn-secundario" data-id="' + i.id_inscripcion + '">Anular</button>' +
+        '</div>'
+    )
+    .join("");
+  listaEl.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", () => onAnular(btn.getAttribute("data-id"), dni, email));
+  });
+}
+
+async function onAnular(idInscripcion, dni, email) {
+  if (!confirm("¿Seguro que querés anular esta inscripción? El cupo se libera para otra persona.")) return;
+  const msgEl = $("mensaje-buscar-mis");
+  msgEl.innerHTML = '<div class="mensaje info">Anulando...</div>';
+  try {
+    const data = await fetchConReintento(
+      API_URL + "?" + param({ action: "anular", dni: dni, email: email, id_inscripcion: idInscripcion })
+    );
+    if (!data.ok) {
+      msgEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo anular.") + '</div>';
+      return;
+    }
+    msgEl.innerHTML = '<div class="mensaje ok">Inscripción anulada.</div>';
+    renderListaMis(data.mis, dni, email);
+  } catch (e) {
+    msgEl.innerHTML = '<div class="mensaje error">' + mensajeErrorRed() + '</div>';
+  }
+}
+
+// ================== LOCALSTORAGE ==================
+
+function guardarLocalStorage(dniForzado, emailForzado) {
+  const dni = dniForzado || normalizarDni($("in-dni").value);
+  const email = emailForzado || normalizarEmail($("in-email").value);
+  const nombre = $("in-nombre").value.trim();
+  if (dni) localStorage.setItem("ti_dni", dni);
+  if (email) localStorage.setItem("ti_email", email);
+  if (nombre) localStorage.setItem("ti_nombre", nombre);
+}
+
+function restaurarLocalStorage() {
+  const dni = localStorage.getItem("ti_dni") || "";
+  const email = localStorage.getItem("ti_email") || "";
+  const nombre = localStorage.getItem("ti_nombre") || "";
+  if (dni) {
+    $("in-dni").value = dni;
+    $("mis-dni").value = dni;
+  }
+  if (email) {
+    $("in-email").value = email;
+    $("in-email2").value = email;
+    $("mis-email").value = email;
+  }
+  if (nombre) $("in-nombre").value = nombre;
+}
+
+// ================== INIT ==================
+
+restaurarLocalStorage();
+cargarTurnos().then(() => {
+  if (normalizarDni($("in-dni").value) && normalizarEmail($("in-email").value)) {
+    actualizarMisSiCorresponde();
+  }
+});
+</script>
+</body>
+</html>
