@@ -8,13 +8,52 @@ sin build. Zona horaria `America/Argentina/Buenos_Aires` en todo.
 ## Estructura
 
 ```
-index.html                 frontend (single file, CSS y JS inline)
-apps-script/Code.gs         backend — se pega a mano en el editor de Apps Script
-tests/logica.test.js        tests de la lógica de validación (Node, sin deps)
-tests/estres.js             prueba de concurrencia contra la URL desplegada
+index.html                    frontend (single file, CSS y JS inline)
+apps-script/Code.gs            backend — se sube con clasp (ver "Despliegue con clasp")
+apps-script/appsscript.json    manifest del proyecto de Apps Script (timezone, webapp, runtime)
+.clasp.json                    config de clasp (scriptId, rootDir) — sin credenciales
+tests/logica.test.js           tests de la lógica de validación (Node, sin deps)
+tests/estres.js                prueba de concurrencia contra la URL desplegada
 ```
 
+## Despliegue con clasp (regla permanente)
+
+**De acá en más, el repo es la única fuente de verdad para `Code.gs`.
+Nadie edita directo en el editor de Apps Script** — todo cambio pasa por
+el repo:
+
+1. Editar `apps-script/Code.gs` (y `apps-script/appsscript.json` si hace
+   falta) en el repo. Commit y push como cualquier otro cambio.
+2. `clasp push` — sube el contenido de `apps-script/` (según `rootDir` en
+   `.clasp.json`) al proyecto de Apps Script.
+3. `clasp deploy -i AKfycby3w-MGZTKiwp7rZK169t-0GQ7ebHvcbyAHyL_HVPbgovDNaALXWbWtf2gFOAs2Gob4mw -d "descripción del cambio"`
+   — actualiza la implementación **existente** (la de la URL `/exec` real
+   que ya usa `index.html`).
+
+**NUNCA `clasp deploy` sin `-i`.** Sin ese flag, clasp crea una
+implementación nueva con una URL `/exec` **distinta** — el frontend, que
+ya tiene la URL vieja hardcodeada en `API_URL`, deja de funcionar contra
+el código nuevo.
+
+Después de cada deploy, verificar que haya salido bien:
+
+```
+curl -sL "https://script.google.com/macros/s/AKfycby3w-MGZTKiwp7rZK169t-0GQ7ebHvcbyAHyL_HVPbgovDNaALXWbWtf2gFOAs2Gob4mw/exec?action=turnos"
+```
+
+Tiene que devolver JSON con `"ok":true` y un array `"turnos"` con 13
+elementos (`PRN-1..4`, `ECO-1..4`, `COM-1..4`, `SOC-1`).
+
+Requiere estar logueado una vez con `clasp login` (cuenta
+`jornadas.donacion.incucai@gmail.com` — elegirla en el navegador que abre
+el login). Las credenciales quedan en `~/.clasprc.json`, **nunca se
+commitean** (vive en el home del usuario, fuera del repo).
+
 ## 1. Crear la planilla y pegar Code.gs
+
+*(Paso histórico — la planilla y el proyecto de Apps Script ya existen.
+Esto queda como referencia de cómo se armó la primera vez; para cambios
+nuevos usar la sección "Despliegue con clasp" de arriba, no este paso.)*
 
 1. Creá una Google Sheet nueva (en blanco), ponele el nombre que quieras.
 2. `Extensiones` → `Apps Script`.
@@ -45,6 +84,12 @@ Después de esto, la planilla va a tener las hojas: `Config`, `Turnos`,
 
 ## 3. Desplegar como Web App
 
+*(Paso histórico — la implementación ya existe, con `deploymentId`
+`AKfycby3w-MGZTKiwp7rZK169t-0GQ7ebHvcbyAHyL_HVPbgovDNaALXWbWtf2gFOAs2Gob4mw`
+y esa es la URL `/exec` que ya tiene cargada `index.html`. Para volver a
+desplegar después de un cambio, usar `clasp deploy -i` — ver "Despliegue
+con clasp" arriba, **no** el flujo manual de `Implementar` en el editor.)*
+
 1. Arriba a la derecha, `Implementar` → `Nueva implementación`.
 2. Ícono de engranaje junto a "Seleccionar tipo" → `Aplicación web`.
 3. Configuración:
@@ -56,14 +101,6 @@ Después de esto, la planilla va a tener las hojas: `Config`, `Turnos`,
      `API_URL` (arriba del `<script>`).
    - En la hoja `Config`, fila `url_app` — se usa en el link del mail de
      inscripción para que la gente pueda anular.
-
-### Volver a desplegar después de editar Code.gs
-
-Guardar el archivo en el editor **no actualiza** la URL ya desplegada.
-Para que los cambios se reflejen: `Implementar` → `Administrar
-implementaciones` → ícono de lápiz sobre la implementación activa →
-`Versión` → `Nueva versión` → `Implementar`. La URL `/exec` se mantiene
-igual, solo cambia el código que corre detrás.
 
 ## 4. Configurar `Config`
 

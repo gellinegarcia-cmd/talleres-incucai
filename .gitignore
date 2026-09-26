@@ -1,0 +1,4 @@
+# Credenciales de clasp (login OAuth) -- viven en el home del usuario
+# (~/.clasprc.json), nunca deberían terminar en el repo, pero por las dudas.
+.clasprc.json
+*.clasprc.json
