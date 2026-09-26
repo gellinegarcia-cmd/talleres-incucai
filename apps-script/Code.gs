@@ -2,6 +2,7 @@
  * Talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI
  * Backend Google Apps Script (Web App) + Google Sheets como base de datos.
  * Zona horaria: America/Argentina/Buenos_Aires en todo.
+ * Versión revisada (fix: fila al anular, celulares con "+", IDs únicos, remitente en cola).
  */
 
 // ================== CONSTANTES ==================
@@ -40,19 +41,16 @@ function setup() {
   });
   setupPorPersona(ss);
   setupColaMails(ss);
-  eliminarHojaPorDefectoSiVacia_(ss);
+  borrarHojaInicialVacia_(ss);
   SpreadsheetApp.flush();
 }
 
-/** Al crear la Google Sheet a mano queda la hoja "Hoja 1" en blanco.
- * Se borra sola acá (al final, cuando ya existen las demás -- una
- * spreadsheet no puede quedar sin ninguna hoja), y solo si sigue vacía
- * (si el organizador ya la usó para algo, no se toca). */
-function eliminarHojaPorDefectoSiVacia_(ss) {
-  var sheet = ss.getSheetByName('Hoja 1');
-  if (sheet && sheet.getLastRow() === 0 && sheet.getLastColumn() === 0) {
-    ss.deleteSheet(sheet);
-  }
+/** Borra "Hoja 1"/"Sheet1" si quedó vacía (solo estética). */
+function borrarHojaInicialVacia_(ss) {
+  ['Hoja 1', 'Hoja1', 'Sheet1'].forEach(function (nombre) {
+    var h = ss.getSheetByName(nombre);
+    if (h && h.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(h);
+  });
 }
 
 function getOrCreateSheet_(ss, nombre) {
@@ -98,8 +96,8 @@ function setupTurnos(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_TURNOS);
   asegurarEncabezado_(sheet, TURNOS_HEADERS);
   // Formato texto plano ("@") en fecha/inicio/fin para que Sheets no las convierta a Date.
-  var maxFilas = Math.max(sheet.getMaxRows(), 200);
-  sheet.getRange(2, 4, maxFilas - 1, 3).setNumberFormat('@');
+  var filasFormato = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(2, 4, filasFormato, 3).setNumberFormat('@');
 
   var existentesIds = sheet.getLastRow() > 1
     ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(function (r) { return String(r[0]); })
@@ -141,18 +139,12 @@ function setupInscripciones(ss) {
   sheet.autoResizeColumns(1, INSCRIPCIONES_HEADERS.length);
 }
 
-var RESUMEN_MAX_FILAS = 200; // margen generoso por si el organizador agrega turnos nuevos en Turnos.
+var RESUMEN_MAX_FILAS = 200; // margen por si el organizador agrega turnos nuevos en Turnos.
 
 function setupResumen(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_RESUMEN);
   var headers = ['id', 'taller', 'fecha', 'horario', 'aula', 'cupo', 'inscriptos', 'disponibles'];
   asegurarEncabezado_(sheet, headers);
-  // Fórmulas fila-por-fila (fila N de Resumen == fila N de Turnos, ambas
-  // arrancan en la fila 2) -- deliberadamente SIN ARRAYFORMULA anidado con
-  // COUNTIFS: esa combinación es frágil en Sheets. Cada celda es una
-  // fórmula simple e independiente, el patrón más robusto y estándar.
-  // Se escriben todas de una con setFormulas() (una sola llamada) en vez de
-  // celda por celda, para no hacer cientos de llamadas al servicio.
   if (!sheet.getRange('A2').getFormula()) {
     var matriz = [];
     for (var f = 2; f <= RESUMEN_MAX_FILAS + 1; f++) {
@@ -176,12 +168,8 @@ function setupResumen(ss) {
 function setupHojaTaller(ss, prefijo) {
   var sheet = getOrCreateSheet_(ss, prefijo);
   var headers = ['turno', 'horario', 'apellido', 'nombre', 'dni', 'email', 'celular', 'profesion', 'institucion', 'provincia'];
-  // Encabezado de conteo por turno en la fila 1, encabezado de columnas en la fila 2, datos desde la fila 3.
   var primeraCelda = sheet.getRange('A1').getValue();
   if (!primeraCelda) {
-    // Reusa la columna "inscriptos" ya calculada en Resumen (fila-por-fila,
-    // sin COUNTIFS anidado en ARRAYFORMULA -- ver nota en setupResumen) en
-    // vez de recalcularla acá con el mismo patrón frágil.
     sheet.getRange('A1').setFormula(
       '="Inscriptos por turno — " & TEXTJOIN(" | ", TRUE, ARRAYFORMULA(' +
       'IF(LEFT(' + SHEET_RESUMEN + '!A2:A,' + prefijo.length + ')="' + prefijo + '",' +
@@ -198,7 +186,6 @@ function setupHojaTaller(ss, prefijo) {
   }
   var celdaFormula = sheet.getRange('A3').getFormula();
   if (!celdaFormula) {
-    // Inscripciones: K=turno_id, L=taller, M=fecha, N=horario, O=aula, F=apellido, E=nombre, C=dni, D=email, J=celular, G=profesion, H=institucion, I=provincia, P=estado
     var formula = '=IFERROR(SORT(FILTER({' +
       SHEET_INSCRIPCIONES + '!K:K,' + SHEET_INSCRIPCIONES + '!N:N,' + SHEET_INSCRIPCIONES + '!F:F,' +
       SHEET_INSCRIPCIONES + '!E:E,' + SHEET_INSCRIPCIONES + '!C:C,' + SHEET_INSCRIPCIONES + '!D:D,' +
@@ -215,7 +202,6 @@ function setupPorPersona(ss) {
   asegurarEncabezado_(sheet, headers);
   var celdaFormula = sheet.getRange('A2').getFormula();
   if (!celdaFormula) {
-    // Inscripciones: F=apellido, E=nombre, C=dni, D=email, J=celular, G=profesion, H=institucion, I=provincia, L=taller, M=fecha, N=horario, O=aula, B=timestamp, P=estado
     var formula = '=IFERROR(SORT(FILTER({' +
       SHEET_INSCRIPCIONES + '!F:F,' + SHEET_INSCRIPCIONES + '!E:E,' + SHEET_INSCRIPCIONES + '!C:C,' +
       SHEET_INSCRIPCIONES + '!D:D,' + SHEET_INSCRIPCIONES + '!J:J,' + SHEET_INSCRIPCIONES + '!G:G,' +
@@ -271,7 +257,9 @@ function jsonOut_(obj) {
 function leerConfig_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_CONFIG);
-  var datos = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 2).getValues();
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return {};
+  var datos = sheet.getRange(2, 1, n, 2).getValues();
   var config = {};
   datos.forEach(function (fila) {
     if (fila[0]) config[String(fila[0]).trim()] = fila[1];
@@ -279,7 +267,7 @@ function leerConfig_() {
   return config;
 }
 
-/** Convierte lo que venga en la celda (texto "YYYY-MM-DD" o Date) a "YYYY-MM-DD". */
+/** Convierte lo que venga en la celda (texto "YYYY-MM-DD", "DD/MM/YYYY" o Date) a "YYYY-MM-DD". */
 function normalizarFecha_(v) {
   if (v instanceof Date) {
     return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
@@ -287,8 +275,7 @@ function normalizarFecha_(v) {
   var s = String(v || '').trim();
   var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (m) return m[1] + '-' + pad2_(+m[2]) + '-' + pad2_(+m[3]);
-  // DD/MM/AAAA (formato argentino) -- m2[1]=día, m2[2]=mes, m2[3]=año.
-  var m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  var m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); // formato argentino DD/MM/AAAA
   if (m2) return m2[3] + '-' + pad2_(+m2[2]) + '-' + pad2_(+m2[1]);
   return s;
 }
@@ -311,7 +298,9 @@ function pad2_(n) {
 function leerTurnos_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_TURNOS);
-  var filas = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), TURNOS_HEADERS.length).getValues();
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return [];
+  var filas = sheet.getRange(2, 1, n, TURNOS_HEADERS.length).getValues();
   return filas
     .filter(function (f) { return f[0]; })
     .map(function (f) {
@@ -331,18 +320,21 @@ function leerTurnos_() {
 function leerInscripciones_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
-  var filas = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), INSCRIPCIONES_HEADERS.length).getValues();
-  // OJO: fila = i+2 tiene que calcularse ANTES de filtrar filas vacías --
-  // si el filter fuera primero, "i" sería el índice dentro del array YA
-  // filtrado, no la posición real en la hoja (se rompe apenas hay una fila
-  // vacía en el medio). Por eso acá es map() y DESPUÉS filter().
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return [];
+  var filas = sheet.getRange(2, 1, n, INSCRIPCIONES_HEADERS.length).getValues();
+  // IMPORTANTE: se guarda el número de fila ANTES de filtrar vacías, para que
+  // anular modifique la fila correcta aunque el organizador haya vaciado alguna fila.
   return filas
-    .map(function (f, i) {
+    .map(function (f, i) { return { f: f, fila: i + 2 }; })
+    .filter(function (x) { return x.f[0]; })
+    .map(function (x) {
+      var f = x.f;
       return {
-        fila: i + 2, // fila real en la hoja, para poder editarla después
-        id_inscripcion: String(f[0]),
+        fila: x.fila,
+        id_inscripcion: String(f[0]).trim(),
         timestamp: f[1],
-        dni: String(f[2]).trim(),
+        dni: String(f[2]).replace(/\D/g, ''),
         email: String(f[3]).trim().toLowerCase(),
         nombre: String(f[4]),
         apellido: String(f[5]),
@@ -351,33 +343,26 @@ function leerInscripciones_() {
         provincia: String(f[8]),
         celular: String(f[9]),
         turno_id: String(f[10]).trim(),
-        taller: String(f[11]),
+        taller: String(f[11]).trim(),
         fecha: normalizarFecha_(f[12]),
-        horario: String(f[13]),
+        horario: String(f[13]).trim(),
         aula: String(f[14]),
         estado: String(f[15]).trim().toUpperCase(),
         fecha_anulacion: f[16]
       };
-    })
-    .filter(function (r) { return r.id_inscripcion; });
+    });
 }
 
 // ================== VALIDACIÓN PURA (testeable en Node) ==================
 
 /**
- * Reglas de "LÓGICA inscribir", en orden, por cada turno pedido:
+ * Por cada turno pedido, en orden:
  * 1. Ya inscripto en ESE turno.
  * 2. Ya inscripto en el MISMO taller, otro turno.
  * 3. Dos turnos del mismo taller en la misma solicitud.
- * 4. Superposición horaria (con activas existentes o con turnos ya aceptados en esta misma solicitud).
+ * 4. Superposición horaria.
  * 5. Cupo.
- *
- * `inscripcion_abierta`, campos obligatorios, email válido y compromiso=SI
- * se validan ANTES de llegar acá (ver accionInscribir) porque combinan
- * datos de Config con datos de la solicitud — acá solo entra lo que la
- * firma pide: solicitud, inscripcionesExistentes, turnos.
- *
- * No usa ninguna API de Google — 100% testeable en Node con el mismo código.
+ * Sin APIs de Google — testeable en Node.
  */
 function validar(solicitud, inscripcionesExistentes, turnos) {
   var activas = inscripcionesExistentes.filter(function (i) { return i.estado === 'ACTIVA'; });
@@ -409,10 +394,7 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 2. Ya inscripto en el MISMO taller, otro turno (entre activas existentes).
-    // Compara contra el taller RESUELTO (turnosPorId), no el texto guardado
-    // en la fila -- si el organizador renombra un taller en Turnos, esto
-    // sigue detectando bien en vez de comparar contra un nombre viejo.
+    // 2. Ya inscripto en el MISMO taller, otro turno.
     var mismoTallerExistente = buscarPrimero_(activas, function (i) {
       return i.dni === solicitud.dni && resolverTurnoDeInscripcion_(i, turnosPorId).taller === turno.taller;
     });
@@ -435,7 +417,7 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 4. Superposición horaria (activas existentes + aceptados en esta solicitud).
+    // 4. Superposición horaria.
     var referencias = activas
       .filter(function (i) { return i.dni === solicitud.dni; })
       .map(function (i) { return resolverTurnoDeInscripcion_(i, turnosPorId); })
@@ -458,9 +440,7 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // OK.
-    var aceptado = { turno_id: turnoId, taller: turno.taller, fecha: turno.fecha, inicio: turno.inicio, fin: turno.fin, aula: turno.aula };
-    aceptados.push(aceptado);
+    aceptados.push({ turno_id: turnoId, taller: turno.taller, fecha: turno.fecha, inicio: turno.inicio, fin: turno.fin, aula: turno.aula });
     inscriptos.push({
       turno_id: turnoId,
       taller: turno.taller,
@@ -473,7 +453,7 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
   return { ok: true, inscriptos: inscriptos, rechazados: rechazados };
 }
 
-/** Validaciones generales de la solicitud que NO requieren Config (campos, email, compromiso). */
+/** Validaciones generales (campos, DNI, email, compromiso, al menos un turno). */
 function validarDatosGenerales(solicitud) {
   var obligatorios = ['dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular'];
   for (var i = 0; i < obligatorios.length; i++) {
@@ -503,7 +483,7 @@ function buscarPrimero_(arr, pred) {
   return null;
 }
 
-/** Usa el turno actual (turnosPorId) si existe; si no, cae al fecha/horario guardados en la inscripción. */
+/** Usa el turno actual si existe; si no, cae a fecha/horario guardados en la inscripción. */
 function resolverTurnoDeInscripcion_(inscripcion, turnosPorId) {
   var turno = turnosPorId[inscripcion.turno_id];
   if (turno) {
@@ -568,6 +548,12 @@ function normalizarEmail_(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+/** Fuerza texto en la celda: evita que "+54 9 11..." o "=..." se interpreten como fórmula,
+ *  y que Sheets convierta fechas, horarios o DNIs. */
+function comoTexto_(v) {
+  return "'" + String(v == null ? '' : v);
+}
+
 function accionMis(dniCrudo, emailCrudo) {
   var dni = normalizarDni_(dniCrudo);
   var email = normalizarEmail_(emailCrudo);
@@ -576,7 +562,6 @@ function accionMis(dniCrudo, emailCrudo) {
   var inscripciones = leerInscripciones_();
   var mias = inscripciones.filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA'; });
 
-  // Si el DNI existe con OTRO email, avisar (mismo criterio que en inscribir).
   if (mias.length === 0) {
     var otroEmail = buscarPrimero_(inscripciones, function (i) { return i.dni === dni && i.email !== email; });
     if (otroEmail) {
@@ -610,13 +595,6 @@ function generarIdInscripcion_(k) {
   return 'INS-' + new Date().getTime() + '-' + k + '-' + Math.floor(Math.random() * 100000);
 }
 
-/** Fuerza a texto plano (prefijo de apóstrofe, como tipear en la hoja a
- * mano) -- evita que Sheets interprete un DNI/celular/etc. como fórmula
- * (ej. celular "+5411...") o lo reformatee solo (ej. una fecha). */
-function comoTexto_(v) {
-  return "'" + String(v);
-}
-
 function accionInscribir(params) {
   var solicitud = {
     dni: normalizarDni_(params.dni),
@@ -648,7 +626,6 @@ function accionInscribir(params) {
       return { ok: false, error: 'Las inscripciones están cerradas.' };
     }
 
-    // DNI ya existe con otro email -> rechazar toda la solicitud.
     var inscripciones = leerInscripciones_();
     var otroEmail = buscarPrimero_(inscripciones, function (i) { return i.dni === solicitud.dni && i.email !== solicitud.email; });
     if (otroEmail) {
@@ -675,7 +652,6 @@ function accionInscribir(params) {
       SpreadsheetApp.flush();
     }
 
-    // Recalcular "mis" con lo que quedó activo (incluye lo recién insertado).
     var inscripcionesFinal = leerInscripciones_();
     var misActivas = inscripcionesFinal.filter(function (i) { return i.dni === solicitud.dni && i.email === solicitud.email && i.estado === 'ACTIVA'; });
 
@@ -700,7 +676,7 @@ function accionInscribir(params) {
         enviarMailInscripcion_(inscripcionesParaMail.solicitud, inscripcionesParaMail.mis, inscripcionesParaMail.config);
       }
     } catch (e) {
-      // El fallo ya se maneja adentro de enviarMailInscripcion_ (encola en ColaMails). No propagar.
+      // no propagar
     }
   }
 
@@ -710,6 +686,7 @@ function accionInscribir(params) {
 function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
   var dni = normalizarDni_(dniCrudo);
   var email = normalizarEmail_(emailCrudo);
+  idInscripcion = String(idInscripcion || '').trim();
   if (!dni || !email || !idInscripcion) {
     return { ok: false, error: 'Faltan datos para anular (DNI, email o inscripción).' };
   }
@@ -731,21 +708,21 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
     });
     if (!propia) {
       resultado = { ok: false, error: 'No se encontró esa inscripción activa a tu nombre.' };
-    } else if (String(sheet.getRange(propia.fila, 1).getValue()) !== propia.id_inscripcion) {
-      // Defensa extra: la fila pudo haberse corrido entre la lectura y la
-      // escritura (ej. alguien borró una fila a mano mientras tanto). Mejor
-      // no escribir a ciegas en una fila que puede ya no ser la que creemos.
-      resultado = { ok: false, error: 'No se pudo anular en este momento. Probá de nuevo.' };
     } else {
-      var ahora = new Date();
-      sheet.getRange(propia.fila, 16).setValue('ANULADA'); // columna P = estado
-      sheet.getRange(propia.fila, 17).setValue(ahora); // columna Q = fecha_anulacion
-      SpreadsheetApp.flush();
+      // Doble control: confirmar que la fila sigue siendo esa inscripción antes de escribir.
+      var idEnFila = String(sheet.getRange(propia.fila, 1).getValue()).trim();
+      if (idEnFila !== idInscripcion) {
+        resultado = { ok: false, error: 'No se pudo anular en este momento. Probá de nuevo.' };
+      } else {
+        var ahora = new Date();
+        sheet.getRange(propia.fila, 16, 1, 2).setValues([['ANULADA', ahora]]); // P = estado, Q = fecha_anulacion
+        SpreadsheetApp.flush();
 
-      var config = leerConfig_();
-      var restantes = leerInscripciones_().filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA'; });
-      resultado = { ok: true, anulado: formatearInscripcionSalida_(propia), mis: restantes.map(formatearInscripcionSalida_) };
-      datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes.map(formatearInscripcionSalida_), config: config };
+        var config = leerConfig_();
+        var restantes = leerInscripciones_().filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA'; });
+        resultado = { ok: true, anulado: formatearInscripcionSalida_(propia), mis: restantes.map(formatearInscripcionSalida_) };
+        datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes.map(formatearInscripcionSalida_), config: config };
+      }
     }
   } finally {
     lock.releaseLock();
@@ -757,7 +734,7 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
         enviarMailAnulacion_(datosParaMail);
       }
     } catch (e) {
-      // idem accionInscribir: nunca romper la respuesta por un fallo de mail.
+      // no propagar
     }
   }
 
@@ -792,11 +769,14 @@ function fechaLarga_(iso) {
 }
 
 function escapeHtml_(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function armarMailInscripcion_(nombre, mis, urlApp) {
   var asunto = 'Recibimos tu inscripción – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var lineaAnular = urlApp
+    ? '<p>Si por algún motivo no podés asistir, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar el cupo.</p>'
+    : '<p>Si por algún motivo no podés asistir, anulá tu inscripción desde la misma página donde te inscribiste, para liberar el cupo.</p>';
   var cuerpo =
     '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
     '<h2 style="color:' + COLOR_AZUL + ';">Hola ' + escapeHtml_(nombre) + ':</h2>' +
@@ -804,7 +784,7 @@ function armarMailInscripcion_(nombre, mis, urlApp) {
     tablaHtmlTurnos_(mis) +
     '<p>Tu inscripción será confirmada por este medio.</p>' +
     '<p>Te pedimos un compromiso: los cupos son muy limitados y cada lugar que queda vacío es un lugar que otra persona no pudo ocupar. Al inscribirte, te comprometés a asistir en el turno asignado.</p>' +
-    '<p>Si por algún motivo no podés asistir, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar el cupo.</p>' +
+    lineaAnular +
     '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">14 y 15 de octubre de 2026 · Centro Cultural de la Ciencia · Auditorio</p>' +
     '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
     '</div>';
@@ -826,20 +806,21 @@ function armarMailAnulacion_(nombre, anulado, mis) {
   return { asunto: asunto, cuerpo: cuerpo };
 }
 
-/** Comparte el mismo remitente/reply-to (Config) entre el envío directo
- * (enviarOEncolar_) y el reintento posterior desde la cola (procesarCola)
- * -- antes procesarCola mandaba sin nombre de remitente ni reply-to. */
 function opcionesMail_(cuerpoHtml, config) {
-  var opciones = { htmlBody: cuerpoHtml, name: config.nombre_remitente || undefined };
-  if (config.reply_to) opciones.replyTo = config.reply_to;
+  var opciones = { htmlBody: cuerpoHtml };
+  if (config && config.nombre_remitente) opciones.name = String(config.nombre_remitente);
+  if (config && config.reply_to) opciones.replyTo = String(config.reply_to);
   return opciones;
 }
 
+function textoPlano_(html) {
+  return String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function enviarOEncolar_(email, asunto, cuerpoHtml, config) {
-  var cuotaOk = MailApp.getRemainingDailyQuota() >= 5;
-  if (cuotaOk) {
+  if (MailApp.getRemainingDailyQuota() >= 5) {
     try {
-      MailApp.sendEmail(email, asunto, cuerpoHtml.replace(/<[^>]+>/g, ''), opcionesMail_(cuerpoHtml, config));
+      MailApp.sendEmail(email, asunto, textoPlano_(cuerpoHtml), opcionesMail_(cuerpoHtml, config));
       return;
     } catch (e) {
       // sigue abajo y encola
@@ -855,7 +836,7 @@ function encolarMail_(email, asunto, cuerpoHtml) {
 }
 
 function enviarMailInscripcion_(solicitud, mis, config) {
-  var urlApp = config.url_app || '';
+  var urlApp = String(config.url_app || '').trim();
   var mail = armarMailInscripcion_(solicitud.nombre, mis, urlApp);
   enviarOEncolar_(solicitud.email, mail.asunto, mail.cuerpo, config);
 }
@@ -869,19 +850,21 @@ function enviarMailAnulacion_(datos) {
 function procesarCola() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_COLA_MAILS);
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return;
+  var filas = sheet.getRange(2, 1, n, COLA_MAILS_HEADERS.length).getValues();
   var config = leerConfig_();
-  var filas = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), COLA_MAILS_HEADERS.length).getValues();
 
   for (var i = 0; i < filas.length; i++) {
     if (MailApp.getRemainingDailyQuota() < 5) break;
     var fila = filas[i];
-    var estado = fila[4];
+    var estado = String(fila[4]).trim().toUpperCase();
     var intentos = Number(fila[5]) || 0;
     if (estado !== 'PENDIENTE' || intentos >= MAX_INTENTOS_MAIL) continue;
 
     var numeroFila = i + 2;
     try {
-      MailApp.sendEmail(fila[1], fila[2], String(fila[3]).replace(/<[^>]+>/g, ''), opcionesMail_(fila[3], config));
+      MailApp.sendEmail(fila[1], fila[2], textoPlano_(fila[3]), opcionesMail_(String(fila[3]), config));
       sheet.getRange(numeroFila, 5).setValue('ENVIADO');
     } catch (e) {
       sheet.getRange(numeroFila, 6).setValue(intentos + 1);
@@ -902,14 +885,15 @@ function instalarTrigger() {
 
 // ================== UTILIDAD DE PRUEBAS ==================
 
-/** Borra (de verdad, es la única función que borra filas) las inscripciones de prueba (DNI que empieza con 99000). */
+/** Borra las inscripciones de prueba (DNI que empieza con 99000). Única función que borra filas. */
 function limpiarPruebas() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
-  var filas = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), INSCRIPCIONES_HEADERS.length).getValues();
-  // De abajo hacia arriba para que borrar no corra los índices de las que faltan.
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return;
+  var filas = sheet.getRange(2, 1, n, INSCRIPCIONES_HEADERS.length).getValues();
   for (var i = filas.length - 1; i >= 0; i--) {
-    var dni = String(filas[i][2]);
+    var dni = String(filas[i][2]).replace(/\D/g, '');
     if (dni.indexOf(PREFIJO_DNI_PRUEBA) === 0) {
       sheet.deleteRow(i + 2);
     }
@@ -917,8 +901,6 @@ function limpiarPruebas() {
 }
 
 // ================== EXPORT PARA TESTS EN NODE ==================
-// Apps Script ignora este bloque (no existe `module` en su runtime); Node lo usa
-// para importar las funciones puras sin ninguna API de Google.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     validar: validar,
