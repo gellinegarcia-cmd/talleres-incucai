@@ -968,12 +968,21 @@ function enviarOEncolar_(email, asunto, cuerpoHtml, config) {
   if (MailApp.getRemainingDailyQuota() >= 5) {
     try {
       MailApp.sendEmail(email, asunto, textoPlano_(cuerpoHtml), opcionesMail_(cuerpoHtml, config));
+      registrarEnvioDirecto_(email, asunto, cuerpoHtml);
       return;
     } catch (e) {
-      // sigue abajo y encola
+      // sigue abajo y encola como PENDIENTE
     }
   }
   encolarMail_(email, asunto, cuerpoHtml);
+}
+
+/** ColaMails como registro COMPLETO de envíos, no solo de pendientes/fallidos:
+ * un envío directo exitoso también deja fila (ENVIADO, intentos 1). */
+function registrarEnvioDirecto_(email, asunto, cuerpoHtml) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_COLA_MAILS);
+  sheet.appendRow([new Date(), email, asunto, cuerpoHtml, 'ENVIADO', 1]);
 }
 
 function encolarMail_(email, asunto, cuerpoHtml) {
@@ -1031,6 +1040,26 @@ function instalarTrigger() {
 }
 
 // ================== UTILIDAD DE PRUEBAS ==================
+
+/** Para ejecutar a mano desde el editor de Apps Script: manda un mail de
+ * prueba real (mismo remitente/HTML que usa la app) a gellinegarcia@gmail.com
+ * y deja en el log la cuota diaria, la cuenta que ejecuta el script, y --
+ * sin try/catch que lo oculte -- el error completo tal cual lo tira
+ * MailApp.sendEmail() si falla. */
+function probarMail() {
+  var config = leerConfig_();
+  console.log('Cuota diaria restante: ' + MailApp.getRemainingDailyQuota());
+  console.log('Cuenta que ejecuta el script: ' + Session.getEffectiveUser().getEmail());
+  var asunto = 'Prueba de envío – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var cuerpo =
+    '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
+    '<h2 style="color:' + COLOR_AZUL + ';">Mail de prueba</h2>' +
+    '<p>Si recibiste esto, el envío de mails desde el script está funcionando.</p>' +
+    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    '</div>';
+  MailApp.sendEmail('gellinegarcia@gmail.com', asunto, textoPlano_(cuerpo), opcionesMail_(cuerpo, config));
+  console.log('sendEmail no lanzó excepción: el envío salió del lado de Apps Script.');
+}
 
 /** Borra las inscripciones de prueba (DNI que empieza con 99000). Única función que borra filas. */
 function limpiarPruebas() {
