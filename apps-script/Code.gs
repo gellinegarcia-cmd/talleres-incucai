@@ -612,6 +612,16 @@ function accionInscribir(params) {
   var generales = validarDatosGenerales(solicitud);
   if (!generales.ok) return generales;
 
+  // Config y Turnos fuera del lock: son datos de referencia que edita el
+  // organizador a mano de vez en cuando -- no lo que se disputa bajo
+  // concurrencia (eso es Inscripciones, adentro). Leerlos antes de pedir
+  // el lock achica el tiempo que cada request lo mantiene tomado.
+  var config = leerConfig_();
+  if (String(config.inscripcion_abierta || '').trim().toUpperCase() !== 'SI') {
+    return { ok: false, error: 'Las inscripciones están cerradas.' };
+  }
+  var turnos = leerTurnos_();
+
   var lock = LockService.getScriptLock();
   var pudoTomarLock = lock.tryLock(30000);
   if (!pudoTomarLock) {
@@ -621,27 +631,24 @@ function accionInscribir(params) {
   var resultado;
   var inscripcionesParaMail = null;
   try {
-    var config = leerConfig_();
-    if (String(config.inscripcion_abierta || '').trim().toUpperCase() !== 'SI') {
-      return { ok: false, error: 'Las inscripciones están cerradas.' };
-    }
-
     var inscripciones = leerInscripciones_();
     var otroEmail = buscarPrimero_(inscripciones, function (i) { return i.dni === solicitud.dni && i.email !== solicitud.email; });
     if (otroEmail) {
       return { ok: false, error: 'Este DNI ya está registrado con otro email (' + ofuscarEmail_(otroEmail.email) + '). Usá ese email o escribí a los organizadores.' };
     }
 
-    var turnos = leerTurnos_();
     var evaluacion = validar(solicitud, inscripciones, turnos);
 
+    var nuevasFormateadas = [];
     if (evaluacion.inscriptos.length > 0) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
       var ahora = new Date();
       var filasNuevas = evaluacion.inscriptos.map(function (ins, k) {
+        var id = generarIdInscripcion_(k);
+        nuevasFormateadas.push({ id_inscripcion: id, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula });
         return [
-          generarIdInscripcion_(k), ahora,
+          id, ahora,
           comoTexto_(solicitud.dni), comoTexto_(solicitud.email), comoTexto_(solicitud.nombre), comoTexto_(solicitud.apellido),
           comoTexto_(solicitud.profesion), comoTexto_(solicitud.institucion), comoTexto_(solicitud.provincia), comoTexto_(solicitud.celular),
           comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
@@ -652,18 +659,23 @@ function accionInscribir(params) {
       SpreadsheetApp.flush();
     }
 
-    var inscripcionesFinal = leerInscripciones_();
-    var misActivas = inscripcionesFinal.filter(function (i) { return i.dni === solicitud.dni && i.email === solicitud.email && i.estado === 'ACTIVA'; });
+    // misActivas en memoria: lo que esta persona ya tenía activo (de la
+    // lectura de arriba, ANTES de escribir) + lo recién insertado. No se
+    // vuelve a leer Inscripciones -- ya sabemos exactamente qué quedó
+    // escrito, y seguimos con el lock tomado (nadie más pudo escribir
+    // en el medio).
+    var activasPrevias = inscripciones.filter(function (i) { return i.dni === solicitud.dni && i.email === solicitud.email && i.estado === 'ACTIVA'; });
+    var misActivas = activasPrevias.map(formatearInscripcionSalida_).concat(nuevasFormateadas);
 
     resultado = {
       ok: true,
       inscriptos: evaluacion.inscriptos,
       rechazados: evaluacion.rechazados,
-      mis: misActivas.map(formatearInscripcionSalida_)
+      mis: misActivas
     };
 
     if (evaluacion.inscriptos.length > 0) {
-      inscripcionesParaMail = { solicitud: solicitud, mis: misActivas.map(formatearInscripcionSalida_), config: config };
+      inscripcionesParaMail = { solicitud: solicitud, mis: misActivas, config: config };
     }
   } finally {
     lock.releaseLock();
@@ -690,6 +702,10 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
   if (!dni || !email || !idInscripcion) {
     return { ok: false, error: 'Faltan datos para anular (DNI, email o inscripción).' };
   }
+
+  // Config fuera del lock: solo hace falta para el mail, no participa de
+  // ninguna condición de carrera con Inscripciones.
+  var config = leerConfig_();
 
   var lock = LockService.getScriptLock();
   var pudoTomarLock = lock.tryLock(30000);
@@ -718,10 +734,14 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
         sheet.getRange(propia.fila, 16, 1, 2).setValues([['ANULADA', ahora]]); // P = estado, Q = fecha_anulacion
         SpreadsheetApp.flush();
 
-        var config = leerConfig_();
-        var restantes = leerInscripciones_().filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA'; });
-        resultado = { ok: true, anulado: formatearInscripcionSalida_(propia), mis: restantes.map(formatearInscripcionSalida_) };
-        datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes.map(formatearInscripcionSalida_), config: config };
+        // restantes en memoria: lo que ya sabíamos activo de esta persona
+        // (de la lectura de arriba), menos la que acabamos de anular. Sin
+        // releer Inscripciones -- seguimos con el lock tomado.
+        var restantes = inscripciones
+          .filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA' && i.id_inscripcion !== idInscripcion; })
+          .map(formatearInscripcionSalida_);
+        resultado = { ok: true, anulado: formatearInscripcionSalida_(propia), mis: restantes };
+        datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes, config: config };
       }
     }
   } finally {

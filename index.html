@@ -187,6 +187,11 @@
   .mensaje.ok { background: #E9F7EF; color: var(--verde); }
   .mensaje.error { background: #FDEDEC; color: var(--rojo); }
 
+  .progreso-fila { background: #EAF0FB; border-radius: 8px; padding: 12px 14px; margin: 10px 0; }
+  .progreso-fila p { font-size: 13px; color: var(--azul); font-weight: 500; margin-bottom: 8px; }
+  .progreso-barra-fondo { background: var(--gris-claro); border-radius: 20px; height: 8px; overflow: hidden; }
+  .progreso-barra { height: 100%; background: var(--dorado); border-radius: 20px; transition: width 0.5s; }
+
   .resultado-item {
     padding: 10px 12px;
     border-radius: 8px;
@@ -330,7 +335,9 @@
 <script>
 // ================== CONFIG ==================
 const API_URL = "https://script.google.com/macros/s/AKfycby3w-MGZTKiwp7rZK169t-0GQ7ebHvcbyAHyL_HVPbgovDNaALXWbWtf2gFOAs2Gob4mw/exec";
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = 45000;
+const RETRY_DELAYS_MS = [2000, 4000, 7000, 10000, 10000]; // ~2,4,7,10,10s
+const RETRY_JITTER_MS = 1500; // ± 1.5s
 
 // ================== ESTADO ==================
 let turnosData = [];        // [{id, taller, aula, fecha, inicio, fin, cupo, ocupados, disponibles}]
@@ -366,20 +373,104 @@ function seSuperponen(fechaA, iniA, finA, fechaB, iniB, finB) {
   return iA < fB && iB < fA;
 }
 
-/** fetch con timeout de 20s y 1 reintento automático. */
-async function fetchConReintento(url) {
-  for (let intento = 0; intento < 2; intento++) {
-    const controlador = new AbortController();
-    const timer = setTimeout(() => controlador.abort(), TIMEOUT_MS);
-    try {
-      const resp = await fetch(url, { signal: controlador.signal });
-      clearTimeout(timer);
-      return await resp.json();
-    } catch (e) {
-      clearTimeout(timer);
-      if (intento === 1) throw e;
-    }
+/** Un solo intento de fetch, con timeout (AbortController). Sin reintento
+ * propio -- el reintento vive en fetchConReintento (simple) o en
+ * llamarConReintentos (con backoff, para inscribir/anular). */
+async function fetchUnaVez(url) {
+  const controlador = new AbortController();
+  const timer = setTimeout(() => controlador.abort(), TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { signal: controlador.signal });
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/** fetch con timeout y 1 reintento automático -- para lecturas simples
+ * (action=turnos, action=mis fuera del flujo de inscribir/anular). */
+async function fetchConReintento(url) {
+  try {
+    return await fetchUnaVez(url);
+  } catch (e) {
+    return await fetchUnaVez(url);
+  }
+}
+
+function esperar(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function delayConJitter(baseMs) {
+  const jitter = (Math.random() * 2 - 1) * RETRY_JITTER_MS;
+  return Math.max(500, baseMs + jitter);
+}
+
+function esRespuestaOcupado(data) {
+  return !!data && data.ok === false && /muy ocupado/i.test(data.error || "");
+}
+
+function mostrarProgresoFila(el, intentoActual, totalIntentos) {
+  const pct = Math.round((intentoActual / totalIntentos) * 100);
+  el.innerHTML =
+    '<div class="progreso-fila">' +
+    '<p>Hay muchas personas inscribiéndose en este momento. Tu solicitud está en fila, no cierres esta página…</p>' +
+    '<div class="progreso-barra-fondo"><div class="progreso-barra" style="width:' + pct + '%"></div></div>' +
+    '</div>';
+}
+
+/**
+ * Llama a `url` (accion inscribir o anular) con reintentos: ante timeout,
+ * error de red, o respuesta "muy ocupado", reintenta hasta 5 veces con
+ * espera creciente + aleatoria (~2,4,7,10,10s ±1.5s).
+ *
+ * Antes de reintentar por TIMEOUT o ERROR DE RED (no por "muy ocupado",
+ * que ya es una respuesta real y completa del servidor) consulta
+ * action=mis primero, por si en realidad la solicitud anterior sí se
+ * aplicó del lado del servidor y solo se perdió la respuesta en el
+ * camino -- `onCheckMis(misActuales)` decide si eso cuenta como éxito
+ * (devolviendo la respuesta a usar) o si hay que seguir reintentando
+ * (devolviendo algo falsy).
+ *
+ * `onProgreso(intentoActual, totalIntentos)` se llama antes de cada
+ * espera, para reflejar el estado de "fila" en la UI.
+ */
+async function llamarConReintentos(url, dniParaCheck, emailParaCheck, onProgreso, onCheckMis) {
+  const totalIntentos = RETRY_DELAYS_MS.length + 1;
+  let ultimaRespuestaOcupado = null;
+  let ultimoErrorRed = null;
+
+  for (let intento = 1; intento <= totalIntentos; intento++) {
+    let fueTimeoutORed = false;
+    try {
+      const data = await fetchUnaVez(url);
+      if (!esRespuestaOcupado(data)) return data;
+      ultimaRespuestaOcupado = data;
+    } catch (e) {
+      fueTimeoutORed = true;
+      ultimoErrorRed = e;
+    }
+
+    if (intento === totalIntentos) break;
+
+    if (fueTimeoutORed && dniParaCheck && emailParaCheck) {
+      try {
+        const mis = await fetchUnaVez(API_URL + "?" + param({ action: "mis", dni: dniParaCheck, email: emailParaCheck }));
+        if (mis && mis.ok) {
+          const exito = onCheckMis ? onCheckMis(mis.mis) : null;
+          if (exito) return exito;
+        }
+      } catch (e2) {
+        // el chequeo también falló -- seguimos al reintento normal.
+      }
+    }
+
+    if (onProgreso) onProgreso(intento, totalIntentos);
+    await esperar(delayConJitter(RETRY_DELAYS_MS[intento - 1]));
+  }
+
+  if (ultimaRespuestaOcupado) return ultimaRespuestaOcupado;
+  throw ultimoErrorRed;
 }
 
 function mensajeErrorRed() {
@@ -650,35 +741,51 @@ async function onInscribir() {
   $("btn-inscribir").textContent = "Enviando...";
   resultadoEl.innerHTML = '<div class="mensaje info">Enviando tu inscripción...</div>';
 
+  const dni = normalizarDni($("in-dni").value);
+  const email = normalizarEmail($("in-email").value);
+  const turnoIdsSolicitados = turnosSeleccionados().map((t) => t.id);
+
   const datos = {
     action: "inscribir",
-    dni: normalizarDni($("in-dni").value),
-    email: normalizarEmail($("in-email").value),
+    dni: dni,
+    email: email,
     nombre: $("in-nombre").value.trim(),
     apellido: $("in-apellido").value.trim(),
     profesion: $("in-profesion").value,
     institucion: $("in-institucion").value.trim(),
     provincia: $("in-provincia").value,
     celular: $("in-celular").value.trim(),
-    turnos: turnosSeleccionados().map((t) => t.id).join(","),
+    turnos: turnoIdsSolicitados.join(","),
     compromiso: "SI"
   };
 
   try {
-    const data = await fetchConReintento(API_URL + "?" + param(datos));
-    if (!data.ok) {
-      resultadoEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo procesar la inscripción.") + '</div>';
-    } else {
-      let html = "";
-      data.inscriptos.forEach((i) => {
-        html += '<div class="resultado-item ok">✓ Inscripto/a en ' + escapeHtml(i.taller) + ' (' + fechaCorta(i.fecha) + ', ' + escapeHtml(i.horario) + ')</div>';
-      });
-      data.rechazados.forEach((r) => {
-        const turno = turnosData.find((t) => t.id === r.turno_id);
-        const nombreTaller = turno ? turno.taller : r.turno_id;
-        html += '<div class="resultado-item error">✗ ' + escapeHtml(nombreTaller) + ': ' + escapeHtml(r.motivo) + '</div>';
-      });
-      resultadoEl.innerHTML = html;
+    const data = await llamarConReintentos(
+      API_URL + "?" + param(datos),
+      dni,
+      email,
+      (intentoActual, totalIntentos) => mostrarProgresoFila(resultadoEl, intentoActual, totalIntentos),
+      (misActuales) => {
+        // Si TODOS los turnos pedidos ya figuran activos, un intento
+        // anterior (cuya respuesta se perdió acá) en realidad ya se
+        // aplicó del lado del servidor -- se arma una respuesta de éxito
+        // sin volver a llamar a inscribir.
+        const todosActivos = turnoIdsSolicitados.every((id) => misActuales.some((m) => m.turno_id === id));
+        if (!todosActivos) return null;
+        return {
+          ok: true,
+          inscriptos: turnoIdsSolicitados.map((id) => {
+            const m = misActuales.find((mm) => mm.turno_id === id);
+            return { turno_id: id, taller: m.taller, fecha: m.fecha, horario: m.horario, aula: m.aula };
+          }),
+          rechazados: [],
+          mis: misActuales
+        };
+      }
+    );
+
+    renderResultadoInscripcion(data, turnoIdsSolicitados, resultadoEl);
+    if (data.ok) {
       misInscripciones = data.mis;
       guardarLocalStorage();
     }
@@ -690,6 +797,38 @@ async function onInscribir() {
     $("btn-inscribir").textContent = "Confirmar inscripción";
     await cargarTurnos();
   }
+}
+
+function renderResultadoInscripcion(data, turnoIdsSolicitados, resultadoEl) {
+  if (!data.ok) {
+    resultadoEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo procesar la inscripción.") + '</div>';
+    return;
+  }
+  let html = "";
+  data.inscriptos.forEach((i) => {
+    html += '<div class="resultado-item ok">✓ Inscripto/a en ' + escapeHtml(i.taller) + ' (' + fechaCorta(i.fecha) + ', ' + escapeHtml(i.horario) + ')</div>';
+  });
+  data.rechazados.forEach((r) => {
+    // Un reintento puede pegarle a un turno que un intento anterior (cuya
+    // respuesta se perdió) ya había inscripto de verdad -- el servidor lo
+    // rechaza por "ya estás inscripto en ESE turno", pero para quien lo
+    // pidió en ESTA MISMA solicitud eso es éxito, no error.
+    const eraDeEstaSolicitud = turnoIdsSolicitados.indexOf(r.turno_id) !== -1;
+    const yaEstabaInscripto = eraDeEstaSolicitud && /^Ya estás inscripto\/a en este taller/.test(r.motivo || "");
+    if (yaEstabaInscripto) {
+      const m = (data.mis || []).find((mm) => mm.turno_id === r.turno_id);
+      const turnoRef = turnosData.find((t) => t.id === r.turno_id);
+      const taller = m ? m.taller : (turnoRef ? turnoRef.taller : r.turno_id);
+      const fecha = m ? m.fecha : (turnoRef ? turnoRef.fecha : "");
+      const horario = m ? m.horario : (turnoRef ? (turnoRef.inicio + "-" + turnoRef.fin) : "");
+      html += '<div class="resultado-item ok">✓ Inscripto/a en ' + escapeHtml(taller) + (fecha ? ' (' + fechaCorta(fecha) + ', ' + escapeHtml(horario) + ')' : '') + '</div>';
+      return;
+    }
+    const turno = turnosData.find((t) => t.id === r.turno_id);
+    const nombreTaller = turno ? turno.taller : r.turno_id;
+    html += '<div class="resultado-item error">✗ ' + escapeHtml(nombreTaller) + ': ' + escapeHtml(r.motivo) + '</div>';
+  });
+  resultadoEl.innerHTML = html;
 }
 
 // ================== MIS INSCRIPCIONES / ANULAR ==================
@@ -750,8 +889,19 @@ async function onAnular(idInscripcion, dni, email) {
   const msgEl = $("mensaje-buscar-mis");
   msgEl.innerHTML = '<div class="mensaje info">Anulando...</div>';
   try {
-    const data = await fetchConReintento(
-      API_URL + "?" + param({ action: "anular", dni: dni, email: email, id_inscripcion: idInscripcion })
+    const data = await llamarConReintentos(
+      API_URL + "?" + param({ action: "anular", dni: dni, email: email, id_inscripcion: idInscripcion }),
+      dni,
+      email,
+      (intentoActual, totalIntentos) => mostrarProgresoFila(msgEl, intentoActual, totalIntentos),
+      (misActuales) => {
+        // Si esa inscripción ya no figura activa, un intento anterior
+        // (cuya respuesta se perdió acá) ya la anuló de verdad -- se arma
+        // una respuesta de éxito sin volver a llamar a anular.
+        const sigueActiva = misActuales.some((m) => m.id_inscripcion === idInscripcion);
+        if (sigueActiva) return null;
+        return { ok: true, anulado: { id_inscripcion: idInscripcion }, mis: misActuales };
+      }
     );
     if (!data.ok) {
       msgEl.innerHTML = '<div class="mensaje error">' + escapeHtml(data.error || "No se pudo anular.") + '</div>';
