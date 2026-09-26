@@ -144,10 +144,19 @@ async function inscribirUno(n) {
       return { ok: true, inscriptos: [{ turno_id: TURNO }], rechazados: [], mis: misActuales };
     });
     const latenciaMs = Date.now() - t0;
-    const inscripto = data.ok && data.inscriptos && data.inscriptos.some((i) => i.turno_id === TURNO);
-    const motivo = data.ok
-      ? ((data.rechazados || []).find((r) => r.turno_id === TURNO) || {}).motivo || null
-      : data.error;
+    // Mismo criterio que renderResultadoInscripcion() en index.html: si un
+    // reintento pega contra un turno que un intento anterior (cuya
+    // respuesta se perdió acá) ya había inscripto de verdad, el servidor
+    // lo devuelve como rechazado por "ya estás inscripto" -- eso es éxito,
+    // no un rechazo real.
+    const inscriptoDirecto = data.ok && data.inscriptos && data.inscriptos.some((i) => i.turno_id === TURNO);
+    const yaEstabaInscripto = data.ok && (data.rechazados || []).some((r) => r.turno_id === TURNO && /^Ya estás inscripto\/a en este taller/.test(r.motivo || ''));
+    const inscripto = inscriptoDirecto || yaEstabaInscripto;
+    const motivo = !data.ok
+      ? data.error
+      : inscripto
+        ? null
+        : ((data.rechazados || []).find((r) => r.turno_id === TURNO) || {}).motivo || null;
     return { dni: dni, arranqueMs: arranque, latenciaMs: latenciaMs, definitiva: true, inscripto: !!inscripto, motivo: inscripto ? null : motivo };
   } catch (e) {
     const latenciaMs = Date.now() - t0;
