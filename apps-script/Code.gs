@@ -13,7 +13,8 @@ var SHEET_INSCRIPCIONES = 'Inscripciones';
 var SHEET_RESUMEN = 'Resumen';
 var SHEET_POR_PERSONA = 'Por persona';
 var SHEET_COLA_MAILS = 'ColaMails';
-var HOJAS_TALLER = ['PRN', 'ECO', 'COM', 'SOC']; // prefijo de id de turno == nombre de hoja
+var SHEET_PRIORIDAD = 'Prioridad';
+var HOJAS_TALLER = ['PRN', 'ECO', 'COM', 'SOC']; // prefijo de id de turno == nombre de hoja == prefijo de token de fase 1
 
 var TZ = 'America/Argentina/Buenos_Aires';
 
@@ -23,10 +24,11 @@ var COLOR_DORADO = '#E3B868';
 var MAX_INTENTOS_MAIL = 3;
 var PREFIJO_DNI_PRUEBA = '99000';
 
-var INSCRIPCIONES_HEADERS = ['id_inscripcion', 'timestamp', 'dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular', 'turno_id', 'taller', 'fecha', 'horario', 'aula', 'estado', 'fecha_anulacion'];
+var INSCRIPCIONES_HEADERS = ['id_inscripcion', 'timestamp', 'dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular', 'turno_id', 'taller', 'fecha', 'horario', 'aula', 'estado', 'fecha_anulacion', 'fase'];
 var TURNOS_HEADERS = ['id', 'taller', 'aula', 'fecha', 'inicio', 'fin', 'cupo', 'activo'];
 var CONFIG_HEADERS = ['clave', 'valor'];
 var COLA_MAILS_HEADERS = ['timestamp', 'email', 'asunto', 'cuerpo_html', 'estado', 'intentos'];
+var PRIORIDAD_HEADERS = ['dni', 'email', 'taller'];
 
 // ================== SETUP (idempotente) ==================
 
@@ -41,6 +43,7 @@ function setup() {
   });
   setupPorPersona(ss);
   setupColaMails(ss);
+  setupPrioridad(ss);
   borrarHojaInicialVacia_(ss);
   SpreadsheetApp.flush();
 }
@@ -72,12 +75,17 @@ function asegurarEncabezado_(sheet, headers) {
 function setupConfig(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_CONFIG);
   asegurarEncabezado_(sheet, CONFIG_HEADERS);
-  var claves = ['inscripcion_abierta', 'nombre_remitente', 'reply_to', 'url_app'];
+  var claves = ['inscripcion_abierta', 'nombre_remitente', 'reply_to', 'url_app', 'fase',
+    'token_PRN', 'token_ECO', 'token_COM', 'token_SOC', 'mensaje_fase1'];
   var valoresPorDefecto = {
     inscripcion_abierta: 'SI',
     nombre_remitente: 'Comité Organizador 1era Jornada Nacional de Donación y Trasplante INCUCAI',
     reply_to: '',
-    url_app: ''
+    url_app: '',
+    fase: '1',
+    mensaje_fase1: 'En este momento la inscripción es exclusiva para personas preasignadas a cada taller por el Comité Organizador. Pronto se abrirán las inscripciones generales.'
+    // token_PRN/ECO/COM/SOC no tienen default fijo -- se generan al azar
+    // acá abajo, solo la primera vez (si la clave ya existe, no se toca).
   };
   var existentes = sheet.getLastRow() > 1
     ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(function (r) { return r[0]; })
@@ -85,11 +93,28 @@ function setupConfig(ss) {
   var filaLibre = sheet.getLastRow() + 1;
   claves.forEach(function (clave) {
     if (existentes.indexOf(clave) === -1) {
-      sheet.getRange(filaLibre, 1, 1, 2).setValues([[clave, valoresPorDefecto[clave]]]);
+      var valor = clave.indexOf('token_') === 0 ? generarToken_() : valoresPorDefecto[clave];
+      sheet.getRange(filaLibre, 1, 1, 2).setValues([[clave, valor]]);
       filaLibre++;
     }
   });
   sheet.autoResizeColumns(1, 2);
+}
+
+/** Token de 8 caracteres (minúsculas + números) para los links de fase 1. */
+function generarToken_() {
+  var alfabeto = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  var token = '';
+  for (var i = 0; i < 8; i++) {
+    token += alfabeto.charAt(Math.floor(Math.random() * alfabeto.length));
+  }
+  return token;
+}
+
+function setupPrioridad(ss) {
+  var sheet = getOrCreateSheet_(ss, SHEET_PRIORIDAD);
+  asegurarEncabezado_(sheet, PRIORIDAD_HEADERS);
+  sheet.autoResizeColumns(1, PRIORIDAD_HEADERS.length);
 }
 
 function setupTurnos(ss) {
@@ -228,7 +253,7 @@ function doGet(e) {
   try {
     switch (action) {
       case 'turnos':
-        resultado = accionTurnos();
+        resultado = accionTurnos(params.t);
         break;
       case 'mis':
         resultado = accionMis(params.dni, params.email);
@@ -348,7 +373,27 @@ function leerInscripciones_() {
         horario: String(f[13]).trim(),
         aula: String(f[14]),
         estado: String(f[15]).trim().toUpperCase(),
-        fecha_anulacion: f[16]
+        fecha_anulacion: f[16],
+        fase: f[17]
+      };
+    });
+}
+
+/** Hoja "Prioridad" (dni | email | taller) -- lista de preasignados para
+ * fase 1. [] si está vacía (en ese caso, accionInscribir no chequea nada). */
+function leerPrioridad_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_PRIORIDAD);
+  var n = Math.max(sheet.getLastRow() - 1, 0);
+  if (n === 0) return [];
+  var filas = sheet.getRange(2, 1, n, PRIORIDAD_HEADERS.length).getValues();
+  return filas
+    .filter(function (f) { return f[0] || f[1]; })
+    .map(function (f) {
+      return {
+        dni: normalizarDni_(f[0]),
+        email: normalizarEmail_(f[1]),
+        taller_prefijo: String(f[2] || '').trim().toUpperCase()
       };
     });
 }
@@ -476,6 +521,64 @@ function validarDatosGenerales(solicitud) {
   return { ok: true };
 }
 
+// ---- Fase 1 (inscripción prioritaria) -- puro, sin APIs de Google. ----
+
+/** '1' (o 1) -> fase 1. Cualquier otra cosa (incluido vacío) -> fase 2 (abierta). */
+function normalizarFase_(v) {
+  return String(v || '').trim() === '1' ? 1 : 2;
+}
+
+/** tokens = { PRN: 'abc123xy', ECO: '...', COM: '...', SOC: '...' } (de Config).
+ * Devuelve el prefijo de taller (PRN/ECO/COM/SOC) si el token coincide
+ * (case-insensitive), o null si no coincide con ninguno / viene vacío. */
+function resolverPrefijoToken_(tokenCrudo, tokens) {
+  var token = String(tokenCrudo || '').trim().toLowerCase();
+  if (!token) return null;
+  for (var i = 0; i < HOJAS_TALLER.length; i++) {
+    var prefijo = HOJAS_TALLER[i];
+    if (tokens[prefijo] && String(tokens[prefijo]).trim().toLowerCase() === token) return prefijo;
+  }
+  return null;
+}
+
+/**
+ * Validaciones específicas de fase 1: token válido, todos los turnos
+ * pedidos del taller de ese token, declaración=SI, y (solo si la hoja
+ * Prioridad tiene filas) dni o email presentes ahí para ese taller.
+ * prioridad = [{dni, email, taller_prefijo}, ...] ([] si la hoja está vacía).
+ * Devuelve {ok:true, prefijo} o {ok:false, error}.
+ */
+function validarFase1_(tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad) {
+  var prefijo = resolverPrefijoToken_(tokenCrudo, tokens);
+  if (!prefijo) {
+    return { ok: false, error: 'Token inválido o faltante para esta fase.' };
+  }
+  var turnoDeOtroTaller = (turnoIds || []).some(function (id) { return id.indexOf(prefijo) !== 0; });
+  if (turnoDeOtroTaller) {
+    return { ok: false, error: 'En esta fase solo podés inscribirte a turnos de tu taller asignado.' };
+  }
+  if (String(declaracionCruda || '').trim().toUpperCase() !== 'SI') {
+    return { ok: false, error: 'Tenés que declarar que fuiste asignado/a a este taller.' };
+  }
+  if (prioridad.length > 0) {
+    var enLista = prioridad.some(function (p) {
+      return p.taller_prefijo === prefijo && (p.dni === dni || p.email === email);
+    });
+    if (!enLista) {
+      return { ok: false, error: 'No encontramos tu DNI/email en la lista de preasignados a este taller. Si creés que es un error, escribí a los organizadores.' };
+    }
+  }
+  return { ok: true, prefijo: prefijo };
+}
+
+/** Punto de entrada por fase: fase 2 (o cualquier valor que no sea "1")
+ * no aplica NINGÚN gating de fase 1 -- ignora token, declaración y
+ * Prioridad por completo. */
+function validarSolicitudFase_(fase, tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad) {
+  if (normalizarFase_(fase) !== 1) return { ok: true };
+  return validarFase1_(tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad);
+}
+
 function buscarPrimero_(arr, pred) {
   for (var i = 0; i < arr.length; i++) {
     if (pred(arr[i])) return arr[i];
@@ -517,28 +620,42 @@ function fechaCorta_(iso) {
 
 // ================== ACCIONES ==================
 
-function accionTurnos() {
+function accionTurnos(tokenCrudo) {
   var turnos = leerTurnos_();
   var inscripciones = leerInscripciones_();
   var activas = inscripciones.filter(function (i) { return i.estado === 'ACTIVA'; });
-  var salida = turnos
-    .filter(function (t) { return t.activo === 'SI'; })
-    .map(function (t) {
-      var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
-      return {
-        id: t.id,
-        taller: t.taller,
-        aula: t.aula,
-        fecha: t.fecha,
-        inicio: t.inicio,
-        fin: t.fin,
-        cupo: t.cupo,
-        ocupados: ocupados,
-        disponibles: Math.max(t.cupo - ocupados, 0)
-      };
-    });
   var config = leerConfig_();
-  return { ok: true, inscripcion_abierta: String(config.inscripcion_abierta || '').trim().toUpperCase() === 'SI', turnos: salida };
+  var abierta = String(config.inscripcion_abierta || '').trim().toUpperCase() === 'SI';
+  var fase = normalizarFase_(config.fase);
+
+  function formatearTurno(t) {
+    var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
+    return {
+      id: t.id,
+      taller: t.taller,
+      aula: t.aula,
+      fecha: t.fecha,
+      inicio: t.inicio,
+      fin: t.fin,
+      cupo: t.cupo,
+      ocupados: ocupados,
+      disponibles: Math.max(t.cupo - ocupados, 0)
+    };
+  }
+
+  if (fase === 1) {
+    var tokens = { PRN: config.token_PRN, ECO: config.token_ECO, COM: config.token_COM, SOC: config.token_SOC };
+    var prefijo = resolverPrefijoToken_(tokenCrudo, tokens);
+    if (!prefijo) {
+      return { ok: true, inscripcion_abierta: abierta, fase: 1, taller: null, turnos: [], mensaje: config.mensaje_fase1 || '' };
+    }
+    var turnosDelTaller = turnos.filter(function (t) { return t.activo === 'SI' && t.id.indexOf(prefijo) === 0; });
+    var nombreTaller = turnosDelTaller.length > 0 ? turnosDelTaller[0].taller : '';
+    return { ok: true, inscripcion_abierta: abierta, fase: 1, taller: nombreTaller, turnos: turnosDelTaller.map(formatearTurno) };
+  }
+
+  var todos = turnos.filter(function (t) { return t.activo === 'SI'; }).map(formatearTurno);
+  return { ok: true, inscripcion_abierta: abierta, fase: 2, turnos: todos };
 }
 
 function normalizarDni_(dni) {
@@ -622,6 +739,16 @@ function accionInscribir(params) {
   }
   var turnos = leerTurnos_();
 
+  // Gating de fase 1 (token + taller + declaración + Prioridad si tiene
+  // filas) -- fuera del lock, igual que Config/Turnos: no es algo que se
+  // dispute por concurrencia. En fase 2 esto es un no-op (ver
+  // validarSolicitudFase_) y no se lee la hoja Prioridad de más.
+  var fase = normalizarFase_(config.fase);
+  var tokensPorTaller = { PRN: config.token_PRN, ECO: config.token_ECO, COM: config.token_COM, SOC: config.token_SOC };
+  var prioridad = fase === 1 ? leerPrioridad_() : [];
+  var resultadoFase = validarSolicitudFase_(config.fase, params.t, solicitud.turnoIds, params.declaracion, solicitud.dni, solicitud.email, tokensPorTaller, prioridad);
+  if (!resultadoFase.ok) return resultadoFase;
+
   var lock = LockService.getScriptLock();
   var pudoTomarLock = lock.tryLock(30000);
   if (!pudoTomarLock) {
@@ -652,7 +779,7 @@ function accionInscribir(params) {
           comoTexto_(solicitud.dni), comoTexto_(solicitud.email), comoTexto_(solicitud.nombre), comoTexto_(solicitud.apellido),
           comoTexto_(solicitud.profesion), comoTexto_(solicitud.institucion), comoTexto_(solicitud.provincia), comoTexto_(solicitud.celular),
           comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
-          'ACTIVA', ''
+          'ACTIVA', '', fase
         ];
       });
       sheet.getRange(sheet.getLastRow() + 1, 1, filasNuevas.length, INSCRIPCIONES_HEADERS.length).setValues(filasNuevas);
@@ -930,6 +1057,10 @@ if (typeof module !== 'undefined' && module.exports) {
     fechaCorta_: fechaCorta_,
     resolverTurnoDeInscripcion_: resolverTurnoDeInscripcion_,
     normalizarDni_: normalizarDni_,
-    normalizarEmail_: normalizarEmail_
+    normalizarEmail_: normalizarEmail_,
+    normalizarFase_: normalizarFase_,
+    resolverPrefijoToken_: resolverPrefijoToken_,
+    validarFase1_: validarFase1_,
+    validarSolicitudFase_: validarSolicitudFase_
   };
 }

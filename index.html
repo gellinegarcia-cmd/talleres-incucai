@@ -213,6 +213,17 @@
   .mis-item .detalle { font-size: 13px; color: var(--gris); margin: 4px 0 10px; }
   .vacio { text-align: center; color: var(--gris); font-size: 13px; padding: 24px 0; }
   .cargando { text-align: center; color: var(--gris); font-size: 13px; padding: 24px 0; }
+
+  .fase1-banner {
+    background: var(--azul);
+    color: var(--blanco);
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -231,6 +242,10 @@
   <div id="aviso-cerrado" class="aviso-cerrado" style="display:none">Las inscripciones están cerradas.</div>
 
   <section id="tab-inscribirme" class="tab-panel activo">
+    <div id="fase1-banner" class="fase1-banner" style="display:none"></div>
+    <div id="fase1-mensaje" class="mensaje info" style="display:none"></div>
+
+    <div id="form-inscripcion">
     <div class="card">
       <h2>Tus datos</h2>
       <label for="in-dni">DNI</label>
@@ -309,12 +324,17 @@
     </div>
 
     <div class="card">
+      <div id="check-declaracion" class="check-row" style="display:none">
+        <input type="checkbox" id="in-declaracion">
+        <span>Declaro que fui asignado/a a este taller por el Comité Organizador.</span>
+      </div>
       <div class="check-row">
         <input type="checkbox" id="in-compromiso">
         <span>Me comprometo a asistir en el/los turno/s asignado/s. Si no puedo asistir, anularé mi inscripción para liberar el cupo.</span>
       </div>
       <button id="btn-inscribir" class="btn-principal">Confirmar inscripción</button>
       <div id="resultado-inscripcion"></div>
+    </div>
     </div>
   </section>
 
@@ -344,6 +364,11 @@ let turnosData = [];        // [{id, taller, aula, fecha, inicio, fin, cupo, ocu
 let misInscripciones = [];  // [{id_inscripcion, turno_id, taller, fecha, horario, aula}]
 let inscripcionAbierta = true;
 let enviando = false;
+
+const tokenUrl = new URLSearchParams(window.location.search).get("t") || "";
+let faseActual = 2;      // 1 o 2, según Config!fase en el servidor
+let tallerFase1 = null;  // nombre del taller cuando fase 1 + token válido; null si no aplica
+let mensajeFase1 = "";   // mensaje a mostrar cuando fase 1 y no hay token válido
 
 // ================== UTILIDADES ==================
 
@@ -499,18 +524,53 @@ function cambiarTab(nombre) {
 
 async function cargarTurnos() {
   try {
-    const data = await fetchConReintento(API_URL + "?action=turnos");
+    const data = await fetchConReintento(API_URL + "?" + param({ action: "turnos", t: tokenUrl }));
     if (!data.ok) {
       $("grilla-turnos").innerHTML = '<div class="mensaje error">No se pudieron cargar los turnos.</div>';
       return;
     }
     inscripcionAbierta = !!data.inscripcion_abierta;
+    faseActual = data.fase === 1 ? 1 : 2;
+    tallerFase1 = faseActual === 1 ? (data.taller || null) : null;
+    mensajeFase1 = data.mensaje || "";
     turnosData = data.turnos;
     $("aviso-cerrado").style.display = inscripcionAbierta ? "none" : "block";
+    actualizarUiFase();
     $("btn-inscribir").style.display = inscripcionAbierta ? "block" : "none";
     renderGrilla();
   } catch (e) {
     $("grilla-turnos").innerHTML = '<div class="mensaje error">' + mensajeErrorRed() + '</div>';
+  }
+}
+
+/** Muestra/oculta el formulario de inscripción y el checkbox de declaración
+ * según la fase actual (fase 2: todo como siempre; fase 1 con token válido:
+ * banner + checkbox extra; fase 1 sin token válido: solo el mensaje, sin
+ * formulario -- la pestaña "Mis inscripciones / Anular" no se toca acá). */
+function actualizarUiFase() {
+  const formEl = $("form-inscripcion");
+  const bannerEl = $("fase1-banner");
+  const mensajeEl = $("fase1-mensaje");
+  const checkDeclaracion = $("check-declaracion");
+
+  if (faseActual === 1 && !tallerFase1) {
+    formEl.style.display = "none";
+    bannerEl.style.display = "none";
+    mensajeEl.style.display = "block";
+    mensajeEl.textContent = mensajeFase1 || "La inscripción todavía no está abierta.";
+    return;
+  }
+
+  formEl.style.display = "block";
+  mensajeEl.style.display = "none";
+
+  if (faseActual === 1 && tallerFase1) {
+    bannerEl.style.display = "block";
+    bannerEl.textContent = "Inscripción prioritaria — " + tallerFase1;
+    checkDeclaracion.style.display = "flex";
+  } else {
+    bannerEl.style.display = "none";
+    checkDeclaracion.style.display = "none";
   }
 }
 
@@ -723,6 +783,7 @@ function validarFormulario() {
   if (!$("in-provincia").value) return "Elegí tu provincia.";
   if (!$("in-celular").value.trim()) return "Falta tu celular.";
   if (turnosSeleccionados().length === 0) return "Elegí al menos un turno.";
+  if (faseActual === 1 && tallerFase1 && !$("in-declaracion").checked) return "Tenés que declarar que fuiste asignado/a a este taller.";
   if (!$("in-compromiso").checked) return "Tenés que aceptar el compromiso de asistencia.";
   return null;
 }
@@ -756,7 +817,9 @@ async function onInscribir() {
     provincia: $("in-provincia").value,
     celular: $("in-celular").value.trim(),
     turnos: turnoIdsSolicitados.join(","),
-    compromiso: "SI"
+    compromiso: "SI",
+    t: tokenUrl,
+    declaracion: (faseActual === 1 && tallerFase1) ? "SI" : ""
   };
 
   try {

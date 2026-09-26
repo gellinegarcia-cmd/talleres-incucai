@@ -19,10 +19,15 @@ const codigo = fs.readFileSync(rutaCodeGs, 'utf8');
 const sandbox = { module: { exports: {} }, console: console };
 vm.createContext(sandbox);
 vm.runInContext(codigo, sandbox, { filename: 'Code.gs' });
-const { validar } = sandbox.module.exports;
+const { validar, normalizarFase_, resolverPrefijoToken_, validarFase1_, validarSolicitudFase_ } = sandbox.module.exports;
 
 if (typeof validar !== 'function') {
   console.error('FAIL fatal: no se pudo extraer validar() de Code.gs (¿cambió el bloque module.exports?).');
+  process.exit(1);
+}
+
+if (typeof validarSolicitudFase_ !== 'function' || typeof resolverPrefijoToken_ !== 'function') {
+  console.error('FAIL fatal: no se pudo extraer la lógica de fase 1 de Code.gs (¿cambió el bloque module.exports?).');
   process.exit(1);
 }
 
@@ -158,6 +163,74 @@ test('dos turnos del mismo taller en la misma solicitud: rechaza el segundo', ()
   assert(r.inscriptos.length === 1 && r.inscriptos[0].turno_id === 'PRN-1', JSON.stringify(r));
   assert(r.rechazados.length === 1 && r.rechazados[0].turno_id === 'PRN-2');
   assert(/Ya elegiste un turno de/.test(r.rechazados[0].motivo), 'motivo: ' + r.rechazados[0].motivo);
+});
+
+// ================== FASE 1 (inscripción prioritaria por token) ==================
+
+const TOKENS = { PRN: 'prn12345', ECO: 'eco12345', COM: 'com12345', SOC: 'soc12345' };
+
+test('fase 1: token válido resuelve el prefijo de taller correcto', () => {
+  assert(resolverPrefijoToken_('prn12345', TOKENS) === 'PRN');
+  assert(resolverPrefijoToken_('  ECO12345  ', TOKENS) === 'ECO', 'debe ser insensible a mayúsculas y espacios');
+});
+
+test('fase 1: token inválido o faltante no resuelve ningún prefijo', () => {
+  assert(resolverPrefijoToken_('noexiste', TOKENS) === null);
+  assert(resolverPrefijoToken_('', TOKENS) === null);
+  assert(resolverPrefijoToken_(null, TOKENS) === null);
+});
+
+test('fase 1: turno de otro taller con token de PRN se rechaza', () => {
+  const r = validarFase1_('prn12345', ['ECO-1'], 'SI', '30111111', 'a@b.com', TOKENS, []);
+  assert(r.ok === false, JSON.stringify(r));
+  assert(/solo podés inscribirte a turnos de tu taller/.test(r.error), 'error: ' + r.error);
+});
+
+test('fase 1: falta la declaración de asignación', () => {
+  const r = validarFase1_('prn12345', ['PRN-1'], '', '30111111', 'a@b.com', TOKENS, []);
+  assert(r.ok === false, JSON.stringify(r));
+  assert(/Tenés que declarar/.test(r.error), 'error: ' + r.error);
+});
+
+test('fase 1: Prioridad vacía no chequea dni/email (solo token + taller + declaración)', () => {
+  const r = validarFase1_('prn12345', ['PRN-1'], 'SI', '30111111', 'nadie@nada.com', TOKENS, []);
+  assert(r.ok === true, JSON.stringify(r));
+  assert(r.prefijo === 'PRN');
+});
+
+test('fase 1: Prioridad con filas exige que dni O email figuren para ese taller', () => {
+  const prioridad = [
+    { dni: '30111111', email: '', taller_prefijo: 'PRN' },
+    { dni: '', email: 'conemail@x.com', taller_prefijo: 'PRN' }
+  ];
+  const rPorDni = validarFase1_('prn12345', ['PRN-1'], 'SI', '30111111', 'otro@x.com', TOKENS, prioridad);
+  assert(rPorDni.ok === true, 'debería alcanzar con el dni: ' + JSON.stringify(rPorDni));
+
+  const rPorEmail = validarFase1_('prn12345', ['PRN-1'], 'SI', '30999999', 'conemail@x.com', TOKENS, prioridad);
+  assert(rPorEmail.ok === true, 'debería alcanzar con el email: ' + JSON.stringify(rPorEmail));
+
+  const rSinNinguno = validarFase1_('prn12345', ['PRN-1'], 'SI', '30000000', 'nada@x.com', TOKENS, prioridad);
+  assert(rSinNinguno.ok === false, JSON.stringify(rSinNinguno));
+  assert(/No encontramos tu DNI\/email/.test(rSinNinguno.error), 'error: ' + rSinNinguno.error);
+
+  const rOtroTaller = validarFase1_('prn12345', ['PRN-1'], 'SI', '30111111', 'otro@x.com', TOKENS, [{ dni: '30111111', email: '', taller_prefijo: 'ECO' }]);
+  assert(rOtroTaller.ok === false, 'el mismo dni preasignado a otro taller no debe alcanzar: ' + JSON.stringify(rOtroTaller));
+});
+
+test('fase 2 ignora el token: pasa sin token, sin declaración y con turnos de cualquier taller', () => {
+  const prioridad = [{ dni: '30111111', email: '', taller_prefijo: 'PRN' }];
+  const r = validarSolicitudFase_('2', null, ['PRN-1', 'SOC-1'], '', '30000000', 'nada@x.com', TOKENS, prioridad);
+  assert(r.ok === true, JSON.stringify(r));
+  const rConBasura = validarSolicitudFase_(2, 'token-basura-que-no-existe', ['ECO-1'], 'NO', '30000000', 'nada@x.com', TOKENS, prioridad);
+  assert(rConBasura.ok === true, 'fase 2 debe ignorar completamente el token y la declaración: ' + JSON.stringify(rConBasura));
+});
+
+test('normalizarFase_: "1" (string o number) es fase 1, cualquier otra cosa es fase 2', () => {
+  assert(normalizarFase_('1') === 1);
+  assert(normalizarFase_(1) === 1);
+  assert(normalizarFase_('2') === 2);
+  assert(normalizarFase_('') === 2);
+  assert(normalizarFase_(undefined) === 2);
 });
 
 // ================== RESUMEN ==================
