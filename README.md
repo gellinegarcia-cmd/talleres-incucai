@@ -5,6 +5,62 @@ Cultural de la Ciencia). Frontend estático (GitHub Pages) + backend Google
 Apps Script (Web App) + Google Sheets como base de datos. Sin frameworks,
 sin build. Zona horaria `America/Argentina/Buenos_Aires` en todo.
 
+## ESTADO AL 27/09
+
+Proyecto pausado en este punto. Resumen para retomar.
+
+**En producción:**
+
+- **Fase 1 activa** (`Config!fase = 1`): la inscripción pública general
+  está cerrada. Solo entra gente con un link que incluye `?t=<token>` de
+  su taller (`token_PRN`, `token_ECO`, `token_COM`, `token_SOC` en
+  `Config`). Sin token válido, la app muestra el mensaje de
+  `Config!mensaje_fase1` y no ofrece formulario.
+- **4 links con token**, uno por taller (PRN/ECO/COM/SOC). Los tokens
+  están únicamente en la hoja `Config` de la planilla — **no están en
+  este repo ni en ningún commit** (son secretos: cualquiera con el link
+  correcto se inscribe en ese taller sin pasar por la lista de
+  preasignados si la hoja `Prioridad` está vacía). Para reobtenerlos:
+  abrir `Config` en la planilla y copiar los valores de esas 4 claves.
+- **Panel compartido con el jefe del comité** (hoja `Panel`, primera
+  pestaña): ve cupos, da de baja, mueve de turno y da altas manuales.
+  Solo esa hoja es editable para él — el resto de las hojas de datos
+  están protegidas (solo el dueño de la planilla edita).
+- **Log completo de mails en `ColaMails`**: todo envío (exitoso,
+  pendiente o con error) queda registrado ahí con estado
+  `ENVIADO`/`PENDIENTE`/`ERROR`. Correr `probarMail()` en el editor si
+  hace falta diagnosticar un problema de envío puntual.
+
+**URLs y despliegue:**
+
+- Frontend (GitHub Pages): `https://gellinegarcia-cmd.github.io/talleres-incucai/`
+- Backend (Web App `/exec`) y `deploymentId`: ver el bloque
+  "Despliegue con clasp" más abajo (misma URL/ID que usa `index.html` en
+  `API_URL` — no cambiaron durante todo el proyecto).
+- Regla de deploy: **`clasp push` y después `clasp deploy -i <deploymentId>` — nunca `clasp deploy` sin `-i`** (crea una URL nueva y
+  rompe el frontend, que tiene la URL vieja hardcodeada).
+
+**PENDIENTES:**
+
+a. **Pasar la fase a 2** cuando venza la ventana de fase 1: cambiar
+   `Config!fase` de `1` a `2` a mano en la planilla (no hace falta
+   redeploy ni tocar código). En fase 2 la inscripción queda abierta a
+   cualquiera, sin token ni declaración, tal como se comporta hoy con
+   fase 1 vencida... salvo que hay que acordarse de hacerlo, no es
+   automático por fecha.
+b. **Mail de confirmación + recordatorio a todos los inscriptos**, a
+   mandar entre el **9 y el 12/10**, en tandas por el límite de
+   ~100 mails/día de una cuenta Gmail común (`MailApp.getRemainingDailyQuota()`).
+   No hay una función lista para esto todavía — cuando se retome, hay que
+   escribir el envío masivo respetando ese límite diario (podría
+   apoyarse en el mismo mecanismo de cola de `ColaMails`/`procesarCola`).
+c. **Confirmar horario y aula de "Acompañamiento social"** (`SOC-1` en
+   la hoja `Turnos`): quedó cargado como único turno del taller
+   (14:00-17:00, Aula B, 15/10, cupo 50) pero falta la confirmación
+   final del comité — si cambia, hay que actualizar esa fila en
+   `Turnos` (la hoja `Resumen` y el Panel se actualizan solos a partir
+   de ahí, no hace falta tocar código).
+
 ## Estructura
 
 ```
