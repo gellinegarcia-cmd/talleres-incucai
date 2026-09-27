@@ -24,7 +24,11 @@ var HOJAS_SOLO_LECTURA = [SHEET_INSCRIPCIONES, SHEET_TURNOS, SHEET_RESUMEN, SHEE
 var HOJAS_OCULTAS = [SHEET_CONFIG, SHEET_COLA_MAILS, SHEET_PRIORIDAD];
 
 // ---- Layout fijo del Panel (filas 1-indexadas; ver regenerarPanel_) ----
-var PANEL_MAX_TURNOS = 40;   // resumen: turnos activos (hoy 13, margen para crecer)
+// PANEL_MAX_TURNOS ajustado al número real de turnos (13, fijos para este
+// evento) para que los totales queden inmediatamente debajo del resumen,
+// sin huecos. Si se agrega un turno nuevo hay que subir este número y
+// volver a desplegar (no hay UI para agregar turnos de todas formas).
+var PANEL_MAX_TURNOS = 13;
 var PANEL_MAX_LISTADO = 550; // listado: inscripciones activas filtradas (cupo total hoy = 510)
 
 var PANEL_FILA_TITULO = 1;
@@ -61,6 +65,10 @@ var PANEL_ALTA_ANCHO = 11;
 // Mismas opciones que los <select> de index.html (in-profesion / in-provincia).
 var PROFESIONES = ['Médico/a', 'Enfermero/a', 'Licenciado/a en Kinesiología', 'Trabajador/a social', 'Psicólogo/a', 'Bioquímico/a', 'Técnico/a', 'Otro'];
 var PROVINCIAS = ['Buenos Aires', 'Ciudad Autónoma de Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes', 'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquén', 'Río Negro', 'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero', 'Tierra del Fuego', 'Tucumán'];
+
+// Anchos fijos (px) para A..K -- pensados para el LISTADO (lo más usado);
+// RESUMEN/FILTRO/ALTA MANUAL se adaptan a esta misma grilla de columnas.
+var PANEL_ANCHOS_COLUMNAS = [150, 120, 95, 240, 115, 170, 230, 70, 105, 190, 260];
 
 var TZ = 'America/Argentina/Buenos_Aires';
 
@@ -306,10 +314,19 @@ function setupPanel(ss) {
     hoja.getRange('A1').setFontWeight('bold').setFontSize(14).setFontColor(COLOR_AZUL);
   }
 
+  // RESUMEN: Taller en A:D combinada (nombres largos), Aula/Día y horario/
+  // stats en E..K -- ver escribirResumen_/escribirTotales_ para el mismo mapeo.
   hoja.getRange(PANEL_FILA_RESUMEN_BANNER, 1).setValue('RESUMEN');
-  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 9).setValues([
-    ['Taller', 'Día', 'Horario', 'Aula', 'Inscriptos', 'Cupo', 'Disponibles', '% Ocup.', 'Barra']
+  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 11).setValues([
+    ['Taller', '', '', '', 'Aula', 'Día y horario', 'Inscriptos', 'Cupo', 'Disponibles', '% Ocup.', 'Barra']
   ]);
+  combinarSiHaceFalta_(hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 4));
+  for (var filaResumen = PANEL_FILA_RESUMEN_DATOS; filaResumen < PANEL_FILA_RESUMEN_DATOS + PANEL_MAX_TURNOS; filaResumen++) {
+    combinarSiHaceFalta_(hoja.getRange(filaResumen, 1, 1, 4));
+  }
+  for (var filaTotal = PANEL_FILA_TOTALES_DATOS; filaTotal < PANEL_FILA_TOTALES_DATOS + 5; filaTotal++) {
+    combinarSiHaceFalta_(hoja.getRange(filaTotal, 1, 1, 4));
+  }
 
   hoja.getRange(PANEL_FILA_FILTRO_BANNER, 1).setValue('FILTRO');
   hoja.getRange(PANEL_FILA_FILTRO_TALLER, 1).setValue('Taller:');
@@ -345,24 +362,58 @@ function setupPanel(ss) {
     celdaInscribir.insertCheckboxes();
     celdaInscribir.setValue(false);
   }
+  // Fila de carga con textos largos (profesión/provincia): que se vea
+  // completo en 2 líneas en vez de cortarse.
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, PANEL_ALTA_ANCHO).setWrap(true);
 
   hoja.getRange(PANEL_FILA_LISTADO_BANNER, 1).setValue('LISTADO');
   hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setValues([
     ['Apellido', 'Nombre', 'DNI', 'Email', 'Celular', 'Institución', 'Taller', 'Turno', 'Horario', 'ACCIÓN', 'RESULTADO', 'id_inscripcion']
   ]);
 
-  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 9).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
-  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
-  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
+  // Título y banners: combinados A:K para que el texto largo no defina el
+  // ancho de la columna A (los anchos los fija setColumnWidth más abajo).
+  combinarSiHaceFalta_(hoja.getRange(PANEL_FILA_TITULO, 1, 1, 11));
+  combinarSiHaceFalta_(hoja.getRange(PANEL_FILA_ACTUALIZADO, 1, 1, 11));
   [PANEL_FILA_RESUMEN_BANNER, PANEL_FILA_FILTRO_BANNER, PANEL_FILA_ALTA_BANNER, PANEL_FILA_LISTADO_BANNER].forEach(function (fila) {
+    combinarSiHaceFalta_(hoja.getRange(fila, 1, 1, 11));
     hoja.getRange(fila, 1).setFontWeight('bold').setFontColor(COLOR_DORADO).setFontSize(12);
   });
 
-  hoja.setFrozenRows(2);
+  // Encabezados de tabla con ajuste de texto, para que no se monten.
+  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 11).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+
+  // Anchos fijos (no autoResize) para las 11 columnas visibles, pensados
+  // para el LISTADO -- ver PANEL_ANCHOS_COLUMNAS.
+  PANEL_ANCHOS_COLUMNAS.forEach(function (ancho, i) {
+    hoja.setColumnWidth(i + 1, ancho);
+  });
+
+  // LISTADO: texto completo (sin cortar) en todas las columnas salvo
+  // Institución, que se recorta (CLIP) para no invadir Taller/Turno.
+  var rangoListado = hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, PANEL_MAX_LISTADO, 11);
+  rangoListado.setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW);
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 6, PANEL_MAX_LISTADO, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP); // Institución
+  // DNI y celular como texto plano: Sheets no debe reinterpretarlos como número.
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 3, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // DNI
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 5, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // Celular
+
+  hoja.setFrozenRows(1); // solo el título.
   hoja.hideColumns(12); // id_inscripcion -- idempotente, no molesta si ya estaba oculta.
-  hoja.autoResizeColumns(1, 12);
 
   protegerPanelParcial_(hoja);
+}
+
+/** Combina `rango` salvo que ya esté combinado exactamente igual (evita
+ * errores de "ya combinada" al re-correr setup sobre un Panel existente). */
+function combinarSiHaceFalta_(rango) {
+  var yaCombinado = rango.getMergedRanges().some(function (m) {
+    return m.getRow() === rango.getRow() && m.getColumn() === rango.getColumn() &&
+      m.getNumRows() === rango.getNumRows() && m.getNumColumns() === rango.getNumColumns();
+  });
+  if (!yaCombinado) rango.merge();
 }
 
 /** Solo el dueño de la planilla puede editar `sheet`; el resto ve, no edita. */
@@ -1513,28 +1564,32 @@ function barraTexto_(pct) {
   return Array(llenos + 1).join('▓') + Array(10 - llenos + 1).join('░');
 }
 
+// Mapeo de columnas de RESUMEN/TOTALES (A..K, 11 columnas de la grilla
+// única del Panel): A:D combinada = Taller/etiqueta, E = Aula, F = Día y
+// horario, G = Inscriptos, H = Cupo, I = Disponibles, J = % Ocup., K = Barra.
+var PANEL_COL_RESUMEN_PCT = 10;
+
 function escribirResumen_(hoja, turnos, activas) {
-  var rango = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, PANEL_MAX_TURNOS, 9);
+  var rango = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, PANEL_MAX_TURNOS, 11);
   rango.clearContent();
-  rango.setBackground(null);
 
   var ordenados = turnos.slice().sort(function (a, b) { return compararTurnoIds_(a.id, b.id); }).slice(0, PANEL_MAX_TURNOS);
   var filas = ordenados.map(function (t) {
     var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
     var disponibles = Math.max(t.cupo - ocupados, 0);
     var pct = t.cupo > 0 ? ocupados / t.cupo : 0;
-    return [t.taller, fechaLarga_(t.fecha), t.inicio + '-' + t.fin, t.aula, ocupados, t.cupo, disponibles, pct, barraTexto_(pct)];
+    return [t.taller, '', '', '', t.aula, fechaCorta_(t.fecha) + ' ' + t.inicio + '-' + t.fin, ocupados, t.cupo, disponibles, pct, barraTexto_(pct)];
   });
   if (filas.length === 0) return;
 
-  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, filas.length, 9).setValues(filas);
-  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 8, filas.length, 1).setNumberFormat('0%');
+  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, filas.length, 11).setValues(filas);
+  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_PCT, filas.length, 1).setNumberFormat('0%');
 
   // Color por % de ocupación: verde <80%, amarillo 80-99%, rojo 100%.
   var reglas = hoja.getConditionalFormatRules().filter(function (r) {
-    return !r.getRanges().some(function (rg) { return rg.getColumn() === 8 && rg.getRow() === PANEL_FILA_RESUMEN_DATOS; });
+    return !r.getRanges().some(function (rg) { return rg.getColumn() === PANEL_COL_RESUMEN_PCT && rg.getRow() === PANEL_FILA_RESUMEN_DATOS; });
   });
-  var rangoPct = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 8, PANEL_MAX_TURNOS, 1);
+  var rangoPct = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_PCT, PANEL_MAX_TURNOS, 1);
   reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(1).setBackground('#FDEDEC').setFontColor('#C0392B').setRanges([rangoPct]).build());
   reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0.8, 0.999999).setBackground('#FEF9E7').setFontColor('#9A7D0A').setRanges([rangoPct]).build());
   reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0.8).setBackground('#E9F7EF').setFontColor('#1E8A4C').setRanges([rangoPct]).build());
@@ -1542,7 +1597,7 @@ function escribirResumen_(hoja, turnos, activas) {
 }
 
 function escribirTotales_(hoja, turnos, activas) {
-  var rango = hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, 5, 9);
+  var rango = hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, 5, 11);
   rango.clearContent();
 
   var filas = HOJAS_TALLER.map(function (prefijo) {
@@ -1552,17 +1607,17 @@ function escribirTotales_(hoja, turnos, activas) {
     var ocupados = activas.filter(function (i) { return i.turno_id.indexOf(prefijo) === 0; }).length;
     var disponibles = Math.max(cupo - ocupados, 0);
     var pct = cupo > 0 ? ocupados / cupo : 0;
-    return ['Total ' + nombre, '', '', '', ocupados, cupo, disponibles, pct, barraTexto_(pct)];
+    return ['Total ' + nombre, '', '', '', '', '', ocupados, cupo, disponibles, pct, barraTexto_(pct)];
   });
 
   var cupoTotal = turnos.reduce(function (s, t) { return s + t.cupo; }, 0);
   var ocupadosTotal = activas.length;
   var pctTotal = cupoTotal > 0 ? ocupadosTotal / cupoTotal : 0;
-  filas.push(['TOTAL GENERAL', '', '', '', ocupadosTotal, cupoTotal, Math.max(cupoTotal - ocupadosTotal, 0), pctTotal, barraTexto_(pctTotal)]);
+  filas.push(['TOTAL GENERAL', '', '', '', '', '', ocupadosTotal, cupoTotal, Math.max(cupoTotal - ocupadosTotal, 0), pctTotal, barraTexto_(pctTotal)]);
 
-  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 9).setValues(filas);
-  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 8, filas.length, 1).setNumberFormat('0%');
-  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 9).setFontWeight('bold');
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 11).setValues(filas);
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, PANEL_COL_RESUMEN_PCT, filas.length, 1).setNumberFormat('0%');
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 11).setFontWeight('bold');
 }
 
 function escribirFiltroTurnoOpciones_(hoja, turnos) {
