@@ -233,6 +233,34 @@ test('normalizarFase_: "1" (string o number) es fase 1, cualquier otra cosa es f
   assert(normalizarFase_(undefined) === 2);
 });
 
+// ================== MOVER (Panel admin) -- usa validar() ignorando la inscripción que se mueve ==================
+
+test('mover: a un turno con cupo libre del mismo taller -- se acepta', () => {
+  // accionPanelMover_ excluye la inscripción que se mueve de "existentes" antes de llamar validar().
+  const r = validar({ dni: '30222001', turnoIds: ['PRN-2'] }, [], TURNOS);
+  assert(r.inscriptos.length === 1 && r.inscriptos[0].turno_id === 'PRN-2', JSON.stringify(r));
+  assert(r.rechazados.length === 0);
+});
+
+test('mover: a un turno sin cupo -- se rechaza por cupo', () => {
+  const turnoChico = { id: 'TEST-MOVER-1', taller: 'Taller de prueba mover', aula: 'Aula X', fecha: '2026-10-14', inicio: '09:00', fin: '10:00', cupo: 1, activo: 'SI' };
+  const turnosTest = TURNOS.concat([turnoChico]);
+  // El único cupo ya está ocupado por otra persona (no la que se mueve).
+  const existentes = [{ dni: '30222002', turno_id: 'TEST-MOVER-1', taller: turnoChico.taller, fecha: turnoChico.fecha, horario: '09:00-10:00', estado: 'ACTIVA' }];
+  const r = validar({ dni: '30222003', turnoIds: ['TEST-MOVER-1'] }, existentes, turnosTest);
+  assert(r.inscriptos.length === 0);
+  assert(r.rechazados.length === 1 && /Sin cupo disponible/.test(r.rechazados[0].motivo), JSON.stringify(r));
+});
+
+test('mover: a un turno que se superpone con otra inscripción activa de la misma persona -- se rechaza', () => {
+  // La persona ya tiene COM-3 (14-15hs, 15/10) y se la quiere mover de PRN-1 a SOC-1 (14-17hs, 15/10): se superpone con COM-3.
+  const existentesConLaPropia = [ins('PRN-1', '30222004', 'ACTIVA'), ins('COM-3', '30222004', 'ACTIVA')];
+  const sinLaPropia = existentesConLaPropia.filter((i) => i.turno_id !== 'PRN-1'); // simula "ignorando la inscripción que se mueve"
+  const r = validar({ dni: '30222004', turnoIds: ['SOC-1'] }, sinLaPropia, TURNOS);
+  assert(r.inscriptos.length === 0);
+  assert(r.rechazados.length === 1 && /Se superpone con Comunicación en donación/.test(r.rechazados[0].motivo), JSON.stringify(r));
+});
+
 // ================== RESUMEN ==================
 
 console.log('');

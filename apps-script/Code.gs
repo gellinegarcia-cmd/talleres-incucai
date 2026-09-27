@@ -14,7 +14,40 @@ var SHEET_RESUMEN = 'Resumen';
 var SHEET_POR_PERSONA = 'Por persona';
 var SHEET_COLA_MAILS = 'ColaMails';
 var SHEET_PRIORIDAD = 'Prioridad';
+var SHEET_PANEL = 'Panel';
 var HOJAS_TALLER = ['PRN', 'ECO', 'COM', 'SOC']; // prefijo de id de turno == nombre de hoja == prefijo de token de fase 1
+
+// Hojas de datos: solo el dueño edita (protegidas en setup). El Panel es
+// la única superficie de escritura para el jefe del comité.
+var HOJAS_SOLO_LECTURA = [SHEET_INSCRIPCIONES, SHEET_TURNOS, SHEET_RESUMEN, SHEET_POR_PERSONA].concat(HOJAS_TALLER);
+// Hojas internas: ocultas para cualquiera que no sea el dueño.
+var HOJAS_OCULTAS = [SHEET_CONFIG, SHEET_COLA_MAILS, SHEET_PRIORIDAD];
+
+// ---- Layout fijo del Panel (filas 1-indexadas; ver regenerarPanel_) ----
+var PANEL_MAX_TURNOS = 40;   // resumen: turnos activos (hoy 13, margen para crecer)
+var PANEL_MAX_LISTADO = 550; // listado: inscripciones activas filtradas (cupo total hoy = 510)
+
+var PANEL_FILA_TITULO = 1;
+var PANEL_FILA_ACTUALIZADO = 2;
+var PANEL_FILA_RESUMEN_BANNER = 4;
+var PANEL_FILA_RESUMEN_HEADERS = 5;
+var PANEL_FILA_RESUMEN_DATOS = 6; // .. + PANEL_MAX_TURNOS - 1
+var PANEL_FILA_TOTALES_BANNER = PANEL_FILA_RESUMEN_DATOS + PANEL_MAX_TURNOS + 1;
+var PANEL_FILA_TOTALES_DATOS = PANEL_FILA_TOTALES_BANNER + 1; // 5 filas: PRN,ECO,COM,SOC,TOTAL GENERAL
+var PANEL_FILA_FILTRO_BANNER = PANEL_FILA_TOTALES_DATOS + 5 + 1;
+var PANEL_FILA_FILTRO_TALLER = PANEL_FILA_FILTRO_BANNER + 1;
+var PANEL_FILA_FILTRO_TURNO = PANEL_FILA_FILTRO_TALLER + 1;
+var PANEL_FILA_FILTRO_MAIL = PANEL_FILA_FILTRO_TURNO + 1;
+var PANEL_FILA_ALTA_BANNER = PANEL_FILA_FILTRO_MAIL + 2;
+var PANEL_FILA_ALTA_HEADERS = PANEL_FILA_ALTA_BANNER + 1;
+var PANEL_FILA_ALTA_DATOS = PANEL_FILA_ALTA_HEADERS + 1; // 1 fila de carga
+var PANEL_FILA_LISTADO_BANNER = PANEL_FILA_ALTA_DATOS + 2;
+var PANEL_FILA_LISTADO_HEADERS = PANEL_FILA_LISTADO_BANNER + 1;
+var PANEL_FILA_LISTADO_DATOS = PANEL_FILA_LISTADO_HEADERS + 1; // .. + PANEL_MAX_LISTADO - 1
+
+// Columnas del bloque LISTADO (A=1).
+var PANEL_COL_ACCION = 10;
+var PANEL_COL_LISTADO_ID = 12; // id_inscripcion, oculta
 
 var TZ = 'America/Argentina/Buenos_Aires';
 
@@ -44,8 +77,12 @@ function setup() {
   setupPorPersona(ss);
   setupColaMails(ss);
   setupPrioridad(ss);
+  setupPanel(ss);
+  protegerHojasDeSoloLectura_(ss);
+  ocultarHojasInternas_(ss);
   borrarHojaInicialVacia_(ss);
   SpreadsheetApp.flush();
+  regenerarPanel_();
 }
 
 /** Borra "Hoja 1"/"Sheet1" si quedó vacía (solo estética). */
@@ -242,6 +279,124 @@ function setupColaMails(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_COLA_MAILS);
   asegurarEncabezado_(sheet, COLA_MAILS_HEADERS);
   sheet.autoResizeColumns(1, COLA_MAILS_HEADERS.length);
+}
+
+// ================== PANEL ADMIN (setup) ==================
+
+function setupPanel(ss) {
+  var hoja = getOrCreateSheet_(ss, SHEET_PANEL);
+  ss.setActiveSheet(hoja);
+  ss.moveActiveSheet(1); // primera pestaña, siempre.
+
+  if (!hoja.getRange('A1').getValue()) {
+    hoja.getRange('A1').setValue('Panel de talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI');
+    hoja.getRange('A1').setFontWeight('bold').setFontSize(14).setFontColor(COLOR_AZUL);
+  }
+
+  hoja.getRange(PANEL_FILA_RESUMEN_BANNER, 1).setValue('RESUMEN');
+  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 9).setValues([
+    ['Taller', 'Día', 'Horario', 'Aula', 'Inscriptos', 'Cupo', 'Disponibles', '% Ocup.', 'Barra']
+  ]);
+
+  hoja.getRange(PANEL_FILA_FILTRO_BANNER, 1).setValue('FILTRO');
+  hoja.getRange(PANEL_FILA_FILTRO_TALLER, 1).setValue('Taller:');
+  hoja.getRange(PANEL_FILA_FILTRO_TURNO, 1).setValue('Turno:');
+  hoja.getRange(PANEL_FILA_FILTRO_MAIL, 1).setValue('Avisar por mail:');
+
+  var celdaTaller = hoja.getRange(PANEL_FILA_FILTRO_TALLER, 2);
+  celdaTaller.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['Todos'].concat(HOJAS_TALLER), true).setAllowInvalid(false).build());
+  if (!celdaTaller.getValue()) celdaTaller.setValue('Todos');
+
+  var celdaMail = hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2);
+  if (typeof celdaMail.getValue() !== 'boolean') {
+    celdaMail.insertCheckboxes();
+    celdaMail.setValue(true); // default tildado, solo la primera vez.
+  }
+
+  hoja.getRange(PANEL_FILA_ALTA_BANNER, 1).setValue('ALTA MANUAL');
+  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, 9).setValues([
+    ['DNI', 'Email', 'Nombre', 'Apellido', 'Celular', 'Institución', 'Turno', 'Inscribir', 'Resultado']
+  ]);
+  var turnosActivos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, 7).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(turnosActivos.map(function (t) { return t.id; }).sort(compararTurnoIds_), true).setAllowInvalid(false).build()
+  );
+  var celdaInscribir = hoja.getRange(PANEL_FILA_ALTA_DATOS, 8);
+  if (typeof celdaInscribir.getValue() !== 'boolean') {
+    celdaInscribir.insertCheckboxes();
+    celdaInscribir.setValue(false);
+  }
+
+  hoja.getRange(PANEL_FILA_LISTADO_BANNER, 1).setValue('LISTADO');
+  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setValues([
+    ['Apellido', 'Nombre', 'DNI', 'Email', 'Celular', 'Institución', 'Taller', 'Turno', 'Horario', 'ACCIÓN', 'RESULTADO', 'id_inscripcion']
+  ]);
+
+  [PANEL_FILA_RESUMEN_HEADERS, PANEL_FILA_ALTA_HEADERS].forEach(function (fila) {
+    hoja.getRange(fila, 1, 1, 9).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
+  });
+  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
+  [PANEL_FILA_RESUMEN_BANNER, PANEL_FILA_FILTRO_BANNER, PANEL_FILA_ALTA_BANNER, PANEL_FILA_LISTADO_BANNER].forEach(function (fila) {
+    hoja.getRange(fila, 1).setFontWeight('bold').setFontColor(COLOR_DORADO).setFontSize(12);
+  });
+
+  hoja.setFrozenRows(2);
+  hoja.hideColumns(12); // id_inscripcion -- idempotente, no molesta si ya estaba oculta.
+  hoja.autoResizeColumns(1, 12);
+
+  protegerPanelParcial_(hoja);
+}
+
+/** Solo el dueño de la planilla puede editar `sheet`; el resto ve, no edita. */
+function protegerSoloDueno_(sheet) {
+  var protecciones = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+  var protection = protecciones.length > 0 ? protecciones[0] : sheet.protect();
+  protection.setDescription('Solo el organizador edita esta hoja.');
+  protection.removeEditors(protection.getEditors());
+  if (protection.canDomainEdit()) protection.setDomainEdit(false);
+}
+
+function protegerHojasDeSoloLectura_(ss) {
+  HOJAS_SOLO_LECTURA.forEach(function (nombre) {
+    var sheet = ss.getSheetByName(nombre);
+    if (sheet) protegerSoloDueno_(sheet);
+  });
+}
+
+/** Oculta Config/ColaMails/Prioridad y cualquier hoja "...Backup...". */
+function ocultarHojasInternas_(ss) {
+  ss.getSheets().forEach(function (sheet) {
+    var nombre = sheet.getName();
+    var esInterna = HOJAS_OCULTAS.indexOf(nombre) !== -1 || /backup/i.test(nombre);
+    if (esInterna && !sheet.isSheetHidden()) sheet.hideSheet();
+  });
+}
+
+/** El Panel queda protegido salvo: filtros, checkbox de mail, columna
+ * ACCIÓN del listado y el bloque de alta manual (sin la celda Resultado). */
+function protegerPanelParcial_(hoja) {
+  var protecciones = hoja.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+  var protection = protecciones.length > 0 ? protecciones[0] : hoja.protect();
+  protection.setDescription('Panel: editable solo en filtros, columna ACCIÓN y alta manual.');
+  protection.removeEditors(protection.getEditors());
+  if (protection.canDomainEdit()) protection.setDomainEdit(false);
+  protection.setUnprotectedRanges([
+    hoja.getRange(PANEL_FILA_FILTRO_TALLER, 2),
+    hoja.getRange(PANEL_FILA_FILTRO_TURNO, 2),
+    hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2),
+    hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, 8),
+    hoja.getRange(PANEL_FILA_LISTADO_DATOS, PANEL_COL_ACCION, PANEL_MAX_LISTADO, 1)
+  ]);
+}
+
+/** Orden PRN,ECO,COM,SOC (igual que en toda la app), y numérico dentro de cada taller. */
+function compararTurnoIds_(a, b) {
+  var prefijoA = buscarPrimero_(HOJAS_TALLER, function (p) { return a.indexOf(p) === 0; });
+  var prefijoB = buscarPrimero_(HOJAS_TALLER, function (p) { return b.indexOf(p) === 0; });
+  var pa = HOJAS_TALLER.indexOf(prefijoA);
+  var pb = HOJAS_TALLER.indexOf(prefijoB);
+  if (pa !== pb) return pa - pb;
+  return a.localeCompare(b, undefined, { numeric: true });
 }
 
 // ================== ROUTER doGet ==================
@@ -822,17 +977,19 @@ function accionInscribir(params) {
   return resultado;
 }
 
-function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
+/**
+ * Núcleo de "dar de baja": toma y libera el lock, valida y marca ANULADA.
+ * NO envía mail -- eso lo decide el llamador (el self-service SIEMPRE
+ * avisa; el Panel admin respeta el checkbox "Avisar por mail"). Devuelve
+ * `datosParaMail` en éxito para que el llamador decida.
+ */
+function accionAnularCore_(dniCrudo, emailCrudo, idInscripcion, config) {
   var dni = normalizarDni_(dniCrudo);
   var email = normalizarEmail_(emailCrudo);
   idInscripcion = String(idInscripcion || '').trim();
   if (!dni || !email || !idInscripcion) {
     return { ok: false, error: 'Faltan datos para anular (DNI, email o inscripción).' };
   }
-
-  // Config fuera del lock: solo hace falta para el mail, no participa de
-  // ninguna condición de carrera con Inscripciones.
-  var config = leerConfig_();
 
   var lock = LockService.getScriptLock();
   var pudoTomarLock = lock.tryLock(30000);
@@ -841,7 +998,6 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
   }
 
   var resultado;
-  var datosParaMail = null;
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
@@ -868,24 +1024,30 @@ function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
           .filter(function (i) { return i.dni === dni && i.email === email && i.estado === 'ACTIVA' && i.id_inscripcion !== idInscripcion; })
           .map(formatearInscripcionSalida_);
         resultado = { ok: true, anulado: formatearInscripcionSalida_(propia), mis: restantes };
-        datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes, config: config };
+        resultado.datosParaMail = { dni: dni, email: email, nombre: propia.nombre, anulado: propia, mis: restantes, config: config };
       }
     }
   } finally {
     lock.releaseLock();
   }
+  return resultado;
+}
 
-  if (datosParaMail) {
+function accionAnular(dniCrudo, emailCrudo, idInscripcion) {
+  var config = leerConfig_(); // fuera del lock: solo hace falta para el mail.
+  var resultado = accionAnularCore_(dniCrudo, emailCrudo, idInscripcion, config);
+
+  if (resultado.datosParaMail) {
     try {
-      if (!esDniDePrueba_(datosParaMail.dni)) {
-        enviarMailAnulacion_(datosParaMail);
+      if (!esDniDePrueba_(resultado.datosParaMail.dni)) {
+        enviarMailAnulacion_(resultado.datosParaMail);
       }
     } catch (e) {
       // no propagar
     }
   }
 
-  return resultado;
+  return { ok: resultado.ok, error: resultado.error, anulado: resultado.anulado, mis: resultado.mis };
 }
 
 function esDniDePrueba_(dni) {
@@ -1029,13 +1191,403 @@ function procesarCola() {
   }
 }
 
-/** Crea el trigger horario de procesarCola si todavía no existe (no lo duplica). */
+/** Crea el trigger horario de procesarCola y el onEdit instalable del Panel,
+ * si todavía no existen (no los duplica). */
 function instalarTrigger() {
-  var yaExiste = ScriptApp.getProjectTriggers().some(function (t) {
-    return t.getHandlerFunction() === 'procesarCola';
-  });
-  if (!yaExiste) {
+  var disparadores = ScriptApp.getProjectTriggers();
+
+  var existeCola = disparadores.some(function (t) { return t.getHandlerFunction() === 'procesarCola'; });
+  if (!existeCola) {
     ScriptApp.newTrigger('procesarCola').timeBased().everyHours(1).create();
+  }
+
+  var existeEdit = disparadores.some(function (t) { return t.getHandlerFunction() === 'onEditInstalablePanel_'; });
+  if (!existeEdit) {
+    ScriptApp.newTrigger('onEditInstalablePanel_').forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onEdit().create();
+  }
+}
+
+// ================== PANEL ADMIN ==================
+//
+// Superficie de escritura para el jefe del comité: dar de baja, mover de
+// turno y dar altas manuales, todo reusando validar()/lock/mails ya
+// existentes. El listado se reescribe siempre como VALORES (nunca fórmula
+// FILTER) para que la columna ACCIÓN no quede desalineada -- ver
+// regenerarPanel_.
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('🛠 Talleres').addItem('Actualizar panel', 'regenerarPanelDesdeMenu_').addToUi();
+  regenerarPanel_();
+}
+
+function regenerarPanelDesdeMenu_() {
+  regenerarPanel_();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Panel actualizado.', '🛠 Talleres', 4);
+}
+
+/** Único punto de entrada del onEdit instalable: solo procesa ediciones
+ * dentro de la hoja Panel, y solo en las celdas interactivas conocidas.
+ * Cualquier otra edición (en Panel o en otra hoja) se ignora. */
+function onEditInstalablePanel_(e) {
+  if (!e || !e.range) return;
+  var hoja = e.range.getSheet();
+  if (hoja.getName() !== SHEET_PANEL) return;
+  if (e.range.getNumRows() > 1 || e.range.getNumColumns() > 1) return; // pegado múltiple: ignorar.
+
+  var fila = e.range.getRow();
+  var columna = e.range.getColumn();
+
+  if ((fila === PANEL_FILA_FILTRO_TALLER || fila === PANEL_FILA_FILTRO_TURNO) && columna === 2) {
+    regenerarPanel_();
+    return;
+  }
+
+  if (columna === PANEL_COL_ACCION && fila >= PANEL_FILA_LISTADO_DATOS && fila < PANEL_FILA_LISTADO_DATOS + PANEL_MAX_LISTADO) {
+    var accionTexto = String(e.range.getValue() || '').trim();
+    if (!accionTexto) return; // reseteo propio del script tras procesar -- no reprocesar (corta el rebote).
+    procesarAccionListado_(fila, accionTexto, leerConfig_(), leerTurnos_());
+    return;
+  }
+
+  if (fila === PANEL_FILA_ALTA_DATOS && columna === 8) {
+    var tildado = e.range.getValue() === true;
+    if (!tildado) return; // destilde propio del script -- no reprocesar.
+    procesarAltaManual_(leerConfig_(), leerTurnos_());
+    return;
+  }
+}
+
+/** Dar de baja (reusa accionAnularCore_) o mover (validar() + anular+crear
+ * en un solo lock) según el texto elegido en la columna ACCIÓN. Escribe el
+ * RESULTADO y regenera el panel. */
+function procesarAccionListado_(numeroFila, accionTexto, config, turnos) {
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_PANEL);
+  var idInscripcion = String(hoja.getRange(numeroFila, PANEL_COL_LISTADO_ID).getValue()).trim();
+  hoja.getRange(numeroFila, PANEL_COL_ACCION).setValue(''); // resetear ya, antes de cualquier otra cosa.
+  if (!idInscripcion) return;
+
+  var avisarMail = hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2).getValue() === true;
+  var pendiente = null;
+
+  if (accionTexto === 'Dar de baja') {
+    var baja = accionPanelBaja_(idInscripcion, config);
+    if (baja.ok) {
+      if (avisarMail && baja.datosParaMail && !esDniDePrueba_(baja.datosParaMail.dni)) {
+        try { enviarMailAnulacion_(baja.datosParaMail); } catch (e) { /* no propagar */ }
+      }
+    } else {
+      pendiente = { idInscripcion: idInscripcion, mensaje: '❌ ' + baja.error };
+    }
+  } else {
+    var m = /^Mover a (\S+)/.exec(accionTexto);
+    if (!m) return; // valor no reconocido -- no-op.
+    var salida = accionPanelMover_(idInscripcion, m[1], config, turnos);
+    if (salida.resultado.ok) {
+      pendiente = { idInscripcion: salida.resultado.nuevoIdInscripcion, mensaje: salida.resultado.mensaje };
+      if (avisarMail && salida.datosParaMail && !esDniDePrueba_(salida.datosParaMail.solicitud.dni)) {
+        try { enviarMailInscripcion_(salida.datosParaMail.solicitud, salida.datosParaMail.mis, salida.datosParaMail.config); } catch (e) { /* no propagar */ }
+      }
+    } else {
+      pendiente = { idInscripcion: idInscripcion, mensaje: '❌ ' + salida.resultado.error };
+    }
+  }
+
+  regenerarPanel_(pendiente);
+}
+
+/** Dar de baja desde el Panel: resuelve dni/email de la fila y reusa
+ * accionAnularCore_ (mismo lock, misma escritura de ANULADA). */
+function accionPanelBaja_(idInscripcion, config) {
+  var inscripciones = leerInscripciones_();
+  var propia = buscarPrimero_(inscripciones, function (i) { return i.id_inscripcion === idInscripcion && i.estado === 'ACTIVA'; });
+  if (!propia) return { ok: false, error: 'No se encontró esa inscripción activa.' };
+  return accionAnularCore_(propia.dni, propia.email, idInscripcion, config);
+}
+
+/** Mover de turno: dentro de UN solo lock, valida el destino con validar()
+ * (ignorando la inscripción que se mueve), anula la original y crea la
+ * nueva. Si `validar()` rechaza, no se toca nada. */
+function accionPanelMover_(idInscripcion, turnoDestinoId, config, turnos) {
+  var lock = LockService.getScriptLock();
+  var pudoTomarLock = lock.tryLock(30000);
+  if (!pudoTomarLock) {
+    return { resultado: { ok: false, error: 'El sistema está muy ocupado. Probá de nuevo en unos segundos.' }, datosParaMail: null };
+  }
+
+  var resultado;
+  var datosParaMail = null;
+  try {
+    var inscripciones = leerInscripciones_();
+    var original = buscarPrimero_(inscripciones, function (i) { return i.id_inscripcion === idInscripcion && i.estado === 'ACTIVA'; });
+    if (!original) {
+      resultado = { ok: false, error: 'No se encontró esa inscripción activa.' };
+    } else {
+      var destino = buscarPrimero_(turnos, function (t) { return t.id === turnoDestinoId; });
+      if (!destino || destino.taller !== original.taller) {
+        resultado = { ok: false, error: 'El turno destino no es válido.' };
+      } else {
+        var otras = inscripciones.filter(function (i) { return i.id_inscripcion !== idInscripcion; });
+        var evaluacion = validar({ dni: original.dni, turnoIds: [turnoDestinoId] }, otras, turnos);
+        if (evaluacion.inscriptos.length === 0) {
+          resultado = { ok: false, error: (evaluacion.rechazados[0] || {}).motivo || 'No se pudo mover.' };
+        } else {
+          var ss = SpreadsheetApp.getActiveSpreadsheet();
+          var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
+          var ahora = new Date();
+          sheet.getRange(original.fila, 16, 1, 2).setValues([['ANULADA', ahora]]);
+
+          var ins = evaluacion.inscriptos[0];
+          var nuevoId = generarIdInscripcion_(0);
+          sheet.getRange(sheet.getLastRow() + 1, 1, 1, INSCRIPCIONES_HEADERS.length).setValues([[
+            nuevoId, ahora,
+            comoTexto_(original.dni), comoTexto_(original.email), comoTexto_(original.nombre), comoTexto_(original.apellido),
+            comoTexto_(original.profesion), comoTexto_(original.institucion), comoTexto_(original.provincia), comoTexto_(original.celular),
+            comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
+            'ACTIVA', '', original.fase // se preserva la fase original: es un cambio de turno, no una inscripción nueva.
+          ]]);
+          SpreadsheetApp.flush();
+
+          var misActivas = inscripciones
+            .filter(function (i) { return i.dni === original.dni && i.email === original.email && i.estado === 'ACTIVA' && i.id_inscripcion !== idInscripcion; })
+            .map(formatearInscripcionSalida_)
+            .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula }]);
+
+          resultado = { ok: true, nuevoIdInscripcion: nuevoId, mensaje: '✅ Movido a ' + ins.turno_id + '.' };
+          datosParaMail = { solicitud: { dni: original.dni, email: original.email, nombre: original.nombre }, mis: misActivas, config: config };
+        }
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  return { resultado: resultado, datosParaMail: datosParaMail };
+}
+
+/** Alta manual: mismas validaciones que accionInscribir (DNI con otro
+ * email, duplicado, mismo taller, superposición, cupo vía validar()), sin
+ * token ni declaración -- es el admin. El formulario del Panel no pide
+ * profesión ni provincia (no están en la especificación del bloque ALTA
+ * MANUAL), así que quedan vacías en la fila creada. */
+function accionPanelAlta_(datos, config, turnos) {
+  var solicitud = {
+    dni: normalizarDni_(datos.dni),
+    email: normalizarEmail_(datos.email),
+    nombre: String(datos.nombre || '').trim(),
+    apellido: String(datos.apellido || '').trim(),
+    profesion: '',
+    institucion: String(datos.institucion || '').trim(),
+    provincia: '',
+    celular: String(datos.celular || '').trim(),
+    turnoIds: [String(datos.turnoId || '').trim()].filter(Boolean)
+  };
+
+  if (!/^\d{7,8}$/.test(solicitud.dni)) return { resultado: { ok: false, error: 'El DNI debe tener 7 u 8 dígitos, sin puntos.' }, datosParaMail: null };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(solicitud.email)) return { resultado: { ok: false, error: 'El email no es válido.' }, datosParaMail: null };
+  if (!solicitud.nombre) return { resultado: { ok: false, error: 'Falta el nombre.' }, datosParaMail: null };
+  if (!solicitud.apellido) return { resultado: { ok: false, error: 'Falta el apellido.' }, datosParaMail: null };
+  if (!solicitud.celular) return { resultado: { ok: false, error: 'Falta el celular.' }, datosParaMail: null };
+  if (!solicitud.institucion) return { resultado: { ok: false, error: 'Falta la institución.' }, datosParaMail: null };
+  if (solicitud.turnoIds.length === 0) return { resultado: { ok: false, error: 'Elegí un turno.' }, datosParaMail: null };
+
+  var lock = LockService.getScriptLock();
+  var pudoTomarLock = lock.tryLock(30000);
+  if (!pudoTomarLock) {
+    return { resultado: { ok: false, error: 'El sistema está muy ocupado. Probá de nuevo en unos segundos.' }, datosParaMail: null };
+  }
+
+  var resultado;
+  var datosParaMail = null;
+  try {
+    var inscripciones = leerInscripciones_();
+    var otroEmail = buscarPrimero_(inscripciones, function (i) { return i.dni === solicitud.dni && i.email !== solicitud.email; });
+    if (otroEmail) {
+      resultado = { ok: false, error: 'Este DNI ya está registrado con otro email (' + ofuscarEmail_(otroEmail.email) + ').' };
+    } else {
+      var evaluacion = validar(solicitud, inscripciones, turnos);
+      if (evaluacion.inscriptos.length === 0) {
+        resultado = { ok: false, error: (evaluacion.rechazados[0] || {}).motivo || 'No se pudo inscribir.' };
+      } else {
+        var ss = SpreadsheetApp.getActiveSpreadsheet();
+        var sheet = ss.getSheetByName(SHEET_INSCRIPCIONES);
+        var ahora = new Date();
+        var ins = evaluacion.inscriptos[0];
+        var nuevoId = generarIdInscripcion_(0);
+        sheet.getRange(sheet.getLastRow() + 1, 1, 1, INSCRIPCIONES_HEADERS.length).setValues([[
+          nuevoId, ahora,
+          comoTexto_(solicitud.dni), comoTexto_(solicitud.email), comoTexto_(solicitud.nombre), comoTexto_(solicitud.apellido),
+          comoTexto_(solicitud.profesion), comoTexto_(solicitud.institucion), comoTexto_(solicitud.provincia), comoTexto_(solicitud.celular),
+          comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
+          'ACTIVA', '', 'admin'
+        ]]);
+        SpreadsheetApp.flush();
+
+        var misActivas = inscripciones
+          .filter(function (i) { return i.dni === solicitud.dni && i.email === solicitud.email && i.estado === 'ACTIVA'; })
+          .map(formatearInscripcionSalida_)
+          .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula }]);
+
+        resultado = { ok: true, nuevoIdInscripcion: nuevoId, mensaje: '✅ Inscripto/a en ' + ins.turno_id + '.' };
+        datosParaMail = { solicitud: solicitud, mis: misActivas, config: config };
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  return { resultado: resultado, datosParaMail: datosParaMail };
+}
+
+function procesarAltaManual_(config, turnos) {
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_PANEL);
+  var fila = PANEL_FILA_ALTA_DATOS;
+  var valores = hoja.getRange(fila, 1, 1, 7).getValues()[0]; // DNI,Email,Nombre,Apellido,Celular,Institución,Turno
+  var datos = { dni: valores[0], email: valores[1], nombre: valores[2], apellido: valores[3], celular: valores[4], institucion: valores[5], turnoId: valores[6] };
+  var avisarMail = hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2).getValue() === true;
+
+  hoja.getRange(fila, 8).setValue(false); // destildar "Inscribir" ya, antes de cualquier otra cosa.
+
+  var salida = accionPanelAlta_(datos, config, turnos);
+  var pendiente = null;
+
+  if (salida.resultado.ok) {
+    if (avisarMail && salida.datosParaMail && !esDniDePrueba_(salida.datosParaMail.solicitud.dni)) {
+      try { enviarMailInscripcion_(salida.datosParaMail.solicitud, salida.datosParaMail.mis, salida.datosParaMail.config); } catch (e) { /* no propagar */ }
+    }
+    hoja.getRange(fila, 1, 1, 7).clearContent(); // limpiar el formulario (DNI..Turno).
+    hoja.getRange(fila, 9).setValue(salida.resultado.mensaje);
+    pendiente = { idInscripcion: salida.resultado.nuevoIdInscripcion, mensaje: salida.resultado.mensaje };
+  } else {
+    hoja.getRange(fila, 9).setValue('❌ ' + salida.resultado.error);
+  }
+
+  regenerarPanel_(pendiente);
+}
+
+/** Reescribe Actualizado + RESUMEN + Totales + dropdown de filtro de turno +
+ * LISTADO. `pendiente` = {idInscripcion, mensaje} opcional: inyecta un
+ * RESULTADO en esa fila del listado recién reescrito (para que un ❌ de
+ * mover, por ejemplo, sea visible aunque la fila no haya cambiado). */
+function regenerarPanel_(pendiente) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(SHEET_PANEL);
+  if (!hoja) return;
+
+  var turnos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
+  var inscripciones = leerInscripciones_();
+  var activas = inscripciones.filter(function (i) { return i.estado === 'ACTIVA'; });
+
+  hoja.getRange(PANEL_FILA_ACTUALIZADO, 1).setValue('Actualizado: ' + Utilities.formatDate(new Date(), TZ, 'dd/MM HH:mm'));
+
+  escribirResumen_(hoja, turnos, activas);
+  escribirTotales_(hoja, turnos, activas);
+  escribirFiltroTurnoOpciones_(hoja, turnos);
+  escribirListado_(hoja, turnos, activas, pendiente || null);
+}
+
+function barraTexto_(pct) {
+  var llenos = Math.max(0, Math.min(10, Math.round(pct * 10)));
+  return Array(llenos + 1).join('▓') + Array(10 - llenos + 1).join('░');
+}
+
+function escribirResumen_(hoja, turnos, activas) {
+  var rango = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, PANEL_MAX_TURNOS, 9);
+  rango.clearContent();
+  rango.setBackground(null);
+
+  var ordenados = turnos.slice().sort(function (a, b) { return compararTurnoIds_(a.id, b.id); }).slice(0, PANEL_MAX_TURNOS);
+  var filas = ordenados.map(function (t) {
+    var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
+    var disponibles = Math.max(t.cupo - ocupados, 0);
+    var pct = t.cupo > 0 ? ocupados / t.cupo : 0;
+    return [t.taller, fechaLarga_(t.fecha), t.inicio + '-' + t.fin, t.aula, ocupados, t.cupo, disponibles, pct, barraTexto_(pct)];
+  });
+  if (filas.length === 0) return;
+
+  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, filas.length, 9).setValues(filas);
+  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 8, filas.length, 1).setNumberFormat('0%');
+
+  // Color por % de ocupación: verde <80%, amarillo 80-99%, rojo 100%.
+  var reglas = hoja.getConditionalFormatRules().filter(function (r) {
+    return !r.getRanges().some(function (rg) { return rg.getColumn() === 8 && rg.getRow() === PANEL_FILA_RESUMEN_DATOS; });
+  });
+  var rangoPct = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 8, PANEL_MAX_TURNOS, 1);
+  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(1).setBackground('#FDEDEC').setFontColor('#C0392B').setRanges([rangoPct]).build());
+  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0.8, 0.999999).setBackground('#FEF9E7').setFontColor('#9A7D0A').setRanges([rangoPct]).build());
+  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0.8).setBackground('#E9F7EF').setFontColor('#1E8A4C').setRanges([rangoPct]).build());
+  hoja.setConditionalFormatRules(reglas);
+}
+
+function escribirTotales_(hoja, turnos, activas) {
+  var rango = hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, 5, 9);
+  rango.clearContent();
+
+  var filas = HOJAS_TALLER.map(function (prefijo) {
+    var turnosTaller = turnos.filter(function (t) { return t.id.indexOf(prefijo) === 0; });
+    var nombre = turnosTaller.length > 0 ? turnosTaller[0].taller : prefijo;
+    var cupo = turnosTaller.reduce(function (s, t) { return s + t.cupo; }, 0);
+    var ocupados = activas.filter(function (i) { return i.turno_id.indexOf(prefijo) === 0; }).length;
+    var disponibles = Math.max(cupo - ocupados, 0);
+    var pct = cupo > 0 ? ocupados / cupo : 0;
+    return ['Total ' + nombre, '', '', '', ocupados, cupo, disponibles, pct, barraTexto_(pct)];
+  });
+
+  var cupoTotal = turnos.reduce(function (s, t) { return s + t.cupo; }, 0);
+  var ocupadosTotal = activas.length;
+  var pctTotal = cupoTotal > 0 ? ocupadosTotal / cupoTotal : 0;
+  filas.push(['TOTAL GENERAL', '', '', '', ocupadosTotal, cupoTotal, Math.max(cupoTotal - ocupadosTotal, 0), pctTotal, barraTexto_(pctTotal)]);
+
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 9).setValues(filas);
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 8, filas.length, 1).setNumberFormat('0%');
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 9).setFontWeight('bold');
+}
+
+function escribirFiltroTurnoOpciones_(hoja, turnos) {
+  var opciones = ['Todos'].concat(turnos.map(function (t) { return t.id; }).sort(compararTurnoIds_));
+  var celda = hoja.getRange(PANEL_FILA_FILTRO_TURNO, 2);
+  celda.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(opciones, true).setAllowInvalid(false).build());
+  var actual = String(celda.getValue() || '').trim();
+  if (!actual) { celda.setValue('Todos'); return; }
+  if (opciones.indexOf(actual) === -1) celda.setValue('Todos'); // turno dado de baja: no dejar el filtro roto.
+}
+
+function escribirListado_(hoja, turnos, activas, pendiente) {
+  var filtroTaller = String(hoja.getRange(PANEL_FILA_FILTRO_TALLER, 2).getValue() || 'Todos').trim();
+  var filtroTurno = String(hoja.getRange(PANEL_FILA_FILTRO_TURNO, 2).getValue() || 'Todos').trim();
+
+  var filtradas = activas.filter(function (i) {
+    if (filtroTaller !== 'Todos' && i.turno_id.indexOf(filtroTaller) !== 0) return false;
+    if (filtroTurno !== 'Todos' && i.turno_id !== filtroTurno) return false;
+    return true;
+  });
+  filtradas.sort(function (a, b) {
+    var c = compararTurnoIds_(a.turno_id, b.turno_id);
+    return c !== 0 ? c : a.apellido.localeCompare(b.apellido);
+  });
+  filtradas = filtradas.slice(0, PANEL_MAX_LISTADO);
+
+  var rangoTotal = hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, PANEL_MAX_LISTADO, 12);
+  rangoTotal.clearContent();
+  rangoTotal.clearDataValidations();
+  if (filtradas.length === 0) return;
+
+  var filas = filtradas.map(function (i) {
+    var mensaje = pendiente && pendiente.idInscripcion === i.id_inscripcion ? pendiente.mensaje : '';
+    return [i.apellido, i.nombre, i.dni, i.email, i.celular, i.institucion, i.taller, i.turno_id, i.horario, '', mensaje, i.id_inscripcion];
+  });
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, filas.length, 12).setValues(filas);
+
+  for (var idx = 0; idx < filtradas.length; idx++) {
+    var insc = filtradas[idx];
+    var prefijo = buscarPrimero_(HOJAS_TALLER, function (p) { return insc.turno_id.indexOf(p) === 0; });
+    var opciones = ['Dar de baja'].concat(
+      turnos
+        .filter(function (t) { return prefijo && t.id.indexOf(prefijo) === 0 && t.id !== insc.turno_id; })
+        .sort(function (a, b) { return compararTurnoIds_(a.id, b.id); })
+        .map(function (t) { return 'Mover a ' + t.id + ' (' + t.inicio + '-' + t.fin + ')'; })
+    );
+    var validacion = SpreadsheetApp.newDataValidation().requireValueInList(opciones, true).setAllowInvalid(false).build();
+    hoja.getRange(PANEL_FILA_LISTADO_DATOS + idx, PANEL_COL_ACCION).setDataValidation(validacion);
   }
 }
 
