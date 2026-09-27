@@ -311,7 +311,6 @@ function setupPanel(ss) {
 
   if (!hoja.getRange('A1').getValue()) {
     hoja.getRange('A1').setValue('Panel de talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI');
-    hoja.getRange('A1').setFontWeight('bold').setFontSize(14).setFontColor(COLOR_AZUL);
   }
 
   // RESUMEN: Taller en A:D combinada (nombres largos), Aula/Día y horario/
@@ -362,9 +361,6 @@ function setupPanel(ss) {
     celdaInscribir.insertCheckboxes();
     celdaInscribir.setValue(false);
   }
-  // Fila de carga con textos largos (profesión/provincia): que se vea
-  // completo en 2 líneas en vez de cortarse.
-  hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, PANEL_ALTA_ANCHO).setWrap(true);
 
   hoja.getRange(PANEL_FILA_LISTADO_BANNER, 1).setValue('LISTADO');
   hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setValues([
@@ -377,13 +373,7 @@ function setupPanel(ss) {
   combinarSiHaceFalta_(hoja.getRange(PANEL_FILA_ACTUALIZADO, 1, 1, 11));
   [PANEL_FILA_RESUMEN_BANNER, PANEL_FILA_FILTRO_BANNER, PANEL_FILA_ALTA_BANNER, PANEL_FILA_LISTADO_BANNER].forEach(function (fila) {
     combinarSiHaceFalta_(hoja.getRange(fila, 1, 1, 11));
-    hoja.getRange(fila, 1).setFontWeight('bold').setFontColor(COLOR_DORADO).setFontSize(12);
   });
-
-  // Encabezados de tabla con ajuste de texto, para que no se monten.
-  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 11).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
-  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
-  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
 
   // Anchos fijos (no autoResize) para las 11 columnas visibles, pensados
   // para el LISTADO -- ver PANEL_ANCHOS_COLUMNAS.
@@ -391,18 +381,10 @@ function setupPanel(ss) {
     hoja.setColumnWidth(i + 1, ancho);
   });
 
-  // LISTADO: texto completo (sin cortar) en todas las columnas salvo
-  // Institución, que se recorta (CLIP) para no invadir Taller/Turno.
-  var rangoListado = hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, PANEL_MAX_LISTADO, 11);
-  rangoListado.setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW);
-  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 6, PANEL_MAX_LISTADO, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP); // Institución
-  // DNI y celular como texto plano: Sheets no debe reinterpretarlos como número.
-  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 3, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // DNI
-  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 5, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // Celular
-
   hoja.setFrozenRows(1); // solo el título.
   hoja.hideColumns(12); // id_inscripcion -- idempotente, no molesta si ya estaba oculta.
 
+  formatearPanel_(hoja);
   protegerPanelParcial_(hoja);
 }
 
@@ -1541,11 +1523,23 @@ function procesarAltaManual_(config, turnos) {
 /** Reescribe Actualizado + RESUMEN + Totales + dropdown de filtro de turno +
  * LISTADO. `pendiente` = {idInscripcion, mensaje} opcional: inyecta un
  * RESULTADO en esa fila del listado recién reescrito (para que un ❌ de
- * mover, por ejemplo, sea visible aunque la fila no haya cambiado). */
+ * mover, por ejemplo, sea visible aunque la fila no haya cambiado).
+ *
+ * Antes de escribir, limpia TODO formato y TODA regla de formato
+ * condicional de la hoja y los vuelve a aplicar de cero (formatearPanel_)
+ * -- evita arrastrar formato de un layout anterior (p.ej. "% Ocup." que
+ * quedó pintado en la columna de Cupo después de mover columnas). Las
+ * validaciones (desplegables/checkboxes) NO se tocan acá: no son
+ * "formato" y ya se recrean donde corresponde (setupPanel para las fijas,
+ * escribirFiltroTurnoOpciones_/escribirListado_ para las dinámicas). */
 function regenerarPanel_(pendiente) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var hoja = ss.getSheetByName(SHEET_PANEL);
   if (!hoja) return;
+
+  hoja.getRange(1, 1, hoja.getMaxRows(), hoja.getMaxColumns()).clearFormat();
+  hoja.setConditionalFormatRules([]);
+  formatearPanel_(hoja);
 
   var turnos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
   var inscripciones = leerInscripciones_();
@@ -1559,6 +1553,56 @@ function regenerarPanel_(pendiente) {
   escribirListado_(hoja, turnos, activas, pendiente || null);
 }
 
+/** Única fuente de verdad del formato visual del Panel (fuentes, colores,
+ * formatos de número, wrap y las reglas de color de % Ocup.) -- todo lo
+ * que `Range.clearFormat()` borra. Se llama una vez desde setupPanel y de
+ * nuevo en cada regenerarPanel_, después de limpiar. No toca contenido,
+ * combinaciones, validaciones, anchos de columna ni congelado. */
+function formatearPanel_(hoja) {
+  if (hoja.getRange('A1').getValue()) {
+    hoja.getRange('A1').setFontWeight('bold').setFontSize(14).setFontColor(COLOR_AZUL);
+  }
+
+  [PANEL_FILA_RESUMEN_BANNER, PANEL_FILA_FILTRO_BANNER, PANEL_FILA_ALTA_BANNER, PANEL_FILA_LISTADO_BANNER].forEach(function (fila) {
+    hoja.getRange(fila, 1).setFontWeight('bold').setFontColor(COLOR_DORADO).setFontSize(12);
+  });
+
+  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 11).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+  hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF').setWrap(true);
+
+  // RESUMEN + TOTALES: Inscriptos/Cupo/Disponibles como entero sin color;
+  // % Ocup. como porcentaje, única columna con el semáforo verde/amarillo/rojo.
+  // Dos rangos separados (no contiguos: entre uno y otro van la fila en
+  // blanco y el banner "Totales").
+  var rangoEnterosResumen = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_INSCRIPTOS, PANEL_MAX_TURNOS, 3); // G:I
+  var rangoEnterosTotales = hoja.getRange(PANEL_FILA_TOTALES_DATOS, PANEL_COL_RESUMEN_INSCRIPTOS, 5, 3);
+  rangoEnterosResumen.setNumberFormat('0');
+  rangoEnterosTotales.setNumberFormat('0');
+
+  var rangoPctResumen = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_PCT, PANEL_MAX_TURNOS, 1); // J
+  var rangoPctTotales = hoja.getRange(PANEL_FILA_TOTALES_DATOS, PANEL_COL_RESUMEN_PCT, 5, 1);
+  rangoPctResumen.setNumberFormat('0%');
+  rangoPctTotales.setNumberFormat('0%');
+  hoja.setConditionalFormatRules(hoja.getConditionalFormatRules().concat([
+    SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(1).setBackground('#FDEDEC').setFontColor('#C0392B').setRanges([rangoPctResumen, rangoPctTotales]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0.8, 0.999999).setBackground('#FEF9E7').setFontColor('#9A7D0A').setRanges([rangoPctResumen, rangoPctTotales]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0.8).setBackground('#E9F7EF').setFontColor('#1E8A4C').setRanges([rangoPctResumen, rangoPctTotales]).build()
+  ]));
+  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, 5, 11).setFontWeight('bold');
+
+  // LISTADO: texto completo (sin cortar) salvo Institución (CLIP). DNI y
+  // celular como texto plano para que Sheets no los reinterprete como número.
+  var rangoListado = hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, PANEL_MAX_LISTADO, 11);
+  rangoListado.setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW);
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 6, PANEL_MAX_LISTADO, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP); // Institución
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 3, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // DNI
+  hoja.getRange(PANEL_FILA_LISTADO_DATOS, 5, PANEL_MAX_LISTADO, 1).setNumberFormat('@'); // Celular
+
+  // ALTA MANUAL: fila de carga con textos largos (profesión/provincia) en 2 líneas.
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, PANEL_ALTA_ANCHO).setWrap(true);
+}
+
 function barraTexto_(pct) {
   var llenos = Math.max(0, Math.min(10, Math.round(pct * 10)));
   return Array(llenos + 1).join('▓') + Array(10 - llenos + 1).join('░');
@@ -1567,8 +1611,11 @@ function barraTexto_(pct) {
 // Mapeo de columnas de RESUMEN/TOTALES (A..K, 11 columnas de la grilla
 // única del Panel): A:D combinada = Taller/etiqueta, E = Aula, F = Día y
 // horario, G = Inscriptos, H = Cupo, I = Disponibles, J = % Ocup., K = Barra.
+var PANEL_COL_RESUMEN_INSCRIPTOS = 7; // G (Inscriptos, Cupo y Disponibles: G:I)
 var PANEL_COL_RESUMEN_PCT = 10;
 
+/** Solo escribe valores -- el formato (número, color, negrita) ya lo dejó
+ * puesto formatearPanel_ antes de llamar a esta función. */
 function escribirResumen_(hoja, turnos, activas) {
   var rango = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, PANEL_MAX_TURNOS, 11);
   rango.clearContent();
@@ -1583,19 +1630,9 @@ function escribirResumen_(hoja, turnos, activas) {
   if (filas.length === 0) return;
 
   hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, filas.length, 11).setValues(filas);
-  hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_PCT, filas.length, 1).setNumberFormat('0%');
-
-  // Color por % de ocupación: verde <80%, amarillo 80-99%, rojo 100%.
-  var reglas = hoja.getConditionalFormatRules().filter(function (r) {
-    return !r.getRanges().some(function (rg) { return rg.getColumn() === PANEL_COL_RESUMEN_PCT && rg.getRow() === PANEL_FILA_RESUMEN_DATOS; });
-  });
-  var rangoPct = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, PANEL_COL_RESUMEN_PCT, PANEL_MAX_TURNOS, 1);
-  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(1).setBackground('#FDEDEC').setFontColor('#C0392B').setRanges([rangoPct]).build());
-  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0.8, 0.999999).setBackground('#FEF9E7').setFontColor('#9A7D0A').setRanges([rangoPct]).build());
-  reglas.push(SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0.8).setBackground('#E9F7EF').setFontColor('#1E8A4C').setRanges([rangoPct]).build());
-  hoja.setConditionalFormatRules(reglas);
 }
 
+/** Solo escribe valores -- ídem escribirResumen_. */
 function escribirTotales_(hoja, turnos, activas) {
   var rango = hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, 5, 11);
   rango.clearContent();
@@ -1616,8 +1653,6 @@ function escribirTotales_(hoja, turnos, activas) {
   filas.push(['TOTAL GENERAL', '', '', '', '', '', ocupadosTotal, cupoTotal, Math.max(cupoTotal - ocupadosTotal, 0), pctTotal, barraTexto_(pctTotal)]);
 
   hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 11).setValues(filas);
-  hoja.getRange(PANEL_FILA_TOTALES_DATOS, PANEL_COL_RESUMEN_PCT, filas.length, 1).setNumberFormat('0%');
-  hoja.getRange(PANEL_FILA_TOTALES_DATOS, 1, filas.length, 11).setFontWeight('bold');
 }
 
 function escribirFiltroTurnoOpciones_(hoja, turnos) {
