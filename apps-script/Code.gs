@@ -49,6 +49,19 @@ var PANEL_FILA_LISTADO_DATOS = PANEL_FILA_LISTADO_HEADERS + 1; // .. + PANEL_MAX
 var PANEL_COL_ACCION = 10;
 var PANEL_COL_LISTADO_ID = 12; // id_inscripcion, oculta
 
+// Columnas del bloque ALTA MANUAL (A=1): DNI,Email,Nombre,Apellido,Celular,
+// Institución,Profesión,Provincia,Turno,Inscribir,Resultado.
+var PANEL_COL_ALTA_PROFESION = 7;
+var PANEL_COL_ALTA_PROVINCIA = 8;
+var PANEL_COL_ALTA_TURNO = 9;
+var PANEL_COL_ALTA_INSCRIBIR = 10;
+var PANEL_COL_ALTA_RESULTADO = 11;
+var PANEL_ALTA_ANCHO = 11;
+
+// Mismas opciones que los <select> de index.html (in-profesion / in-provincia).
+var PROFESIONES = ['Médico/a', 'Enfermero/a', 'Licenciado/a en Kinesiología', 'Trabajador/a social', 'Psicólogo/a', 'Bioquímico/a', 'Técnico/a', 'Otro'];
+var PROVINCIAS = ['Buenos Aires', 'Ciudad Autónoma de Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes', 'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquén', 'Río Negro', 'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero', 'Tierra del Fuego', 'Tucumán'];
+
 var TZ = 'America/Argentina/Buenos_Aires';
 
 var COLOR_AZUL = '#2B3A67';
@@ -314,14 +327,20 @@ function setupPanel(ss) {
   }
 
   hoja.getRange(PANEL_FILA_ALTA_BANNER, 1).setValue('ALTA MANUAL');
-  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, 9).setValues([
-    ['DNI', 'Email', 'Nombre', 'Apellido', 'Celular', 'Institución', 'Turno', 'Inscribir', 'Resultado']
+  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setValues([
+    ['DNI', 'Email', 'Nombre', 'Apellido', 'Celular', 'Institución', 'Profesión', 'Provincia', 'Turno', 'Inscribir', 'Resultado']
   ]);
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_PROFESION).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(PROFESIONES, true).setAllowInvalid(false).build()
+  );
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_PROVINCIA).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(PROVINCIAS, true).setAllowInvalid(false).build()
+  );
   var turnosActivos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
-  hoja.getRange(PANEL_FILA_ALTA_DATOS, 7).setDataValidation(
+  hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_TURNO).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(turnosActivos.map(function (t) { return t.id; }).sort(compararTurnoIds_), true).setAllowInvalid(false).build()
   );
-  var celdaInscribir = hoja.getRange(PANEL_FILA_ALTA_DATOS, 8);
+  var celdaInscribir = hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_INSCRIBIR);
   if (typeof celdaInscribir.getValue() !== 'boolean') {
     celdaInscribir.insertCheckboxes();
     celdaInscribir.setValue(false);
@@ -332,9 +351,8 @@ function setupPanel(ss) {
     ['Apellido', 'Nombre', 'DNI', 'Email', 'Celular', 'Institución', 'Taller', 'Turno', 'Horario', 'ACCIÓN', 'RESULTADO', 'id_inscripcion']
   ]);
 
-  [PANEL_FILA_RESUMEN_HEADERS, PANEL_FILA_ALTA_HEADERS].forEach(function (fila) {
-    hoja.getRange(fila, 1, 1, 9).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
-  });
+  hoja.getRange(PANEL_FILA_RESUMEN_HEADERS, 1, 1, 9).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
+  hoja.getRange(PANEL_FILA_ALTA_HEADERS, 1, 1, PANEL_ALTA_ANCHO).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
   hoja.getRange(PANEL_FILA_LISTADO_HEADERS, 1, 1, 12).setFontWeight('bold').setBackground(COLOR_AZUL).setFontColor('#FFFFFF');
   [PANEL_FILA_RESUMEN_BANNER, PANEL_FILA_FILTRO_BANNER, PANEL_FILA_ALTA_BANNER, PANEL_FILA_LISTADO_BANNER].forEach(function (fila) {
     hoja.getRange(fila, 1).setFontWeight('bold').setFontColor(COLOR_DORADO).setFontSize(12);
@@ -384,7 +402,7 @@ function protegerPanelParcial_(hoja) {
     hoja.getRange(PANEL_FILA_FILTRO_TALLER, 2),
     hoja.getRange(PANEL_FILA_FILTRO_TURNO, 2),
     hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2),
-    hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, 8),
+    hoja.getRange(PANEL_FILA_ALTA_DATOS, 1, 1, PANEL_COL_ALTA_INSCRIBIR),
     hoja.getRange(PANEL_FILA_LISTADO_DATOS, PANEL_COL_ACCION, PANEL_MAX_LISTADO, 1)
   ]);
 }
@@ -1249,7 +1267,7 @@ function onEditInstalablePanel_(e) {
     return;
   }
 
-  if (fila === PANEL_FILA_ALTA_DATOS && columna === 8) {
+  if (fila === PANEL_FILA_ALTA_DATOS && columna === PANEL_COL_ALTA_INSCRIBIR) {
     var tildado = e.range.getValue() === true;
     if (!tildado) return; // destilde propio del script -- no reprocesar.
     procesarAltaManual_(leerConfig_(), leerTurnos_());
@@ -1366,18 +1384,18 @@ function accionPanelMover_(idInscripcion, turnoDestinoId, config, turnos) {
 
 /** Alta manual: mismas validaciones que accionInscribir (DNI con otro
  * email, duplicado, mismo taller, superposición, cupo vía validar()), sin
- * token ni declaración -- es el admin. El formulario del Panel no pide
- * profesión ni provincia (no están en la especificación del bloque ALTA
- * MANUAL), así que quedan vacías en la fila creada. */
+ * token ni declaración -- es el admin. Profesión y provincia son
+ * obligatorias, igual que en la app, con las mismas opciones (PROFESIONES/
+ * PROVINCIAS, iguales a los <select> de index.html). */
 function accionPanelAlta_(datos, config, turnos) {
   var solicitud = {
     dni: normalizarDni_(datos.dni),
     email: normalizarEmail_(datos.email),
     nombre: String(datos.nombre || '').trim(),
     apellido: String(datos.apellido || '').trim(),
-    profesion: '',
+    profesion: String(datos.profesion || '').trim(),
     institucion: String(datos.institucion || '').trim(),
-    provincia: '',
+    provincia: String(datos.provincia || '').trim(),
     celular: String(datos.celular || '').trim(),
     turnoIds: [String(datos.turnoId || '').trim()].filter(Boolean)
   };
@@ -1388,6 +1406,8 @@ function accionPanelAlta_(datos, config, turnos) {
   if (!solicitud.apellido) return { resultado: { ok: false, error: 'Falta el apellido.' }, datosParaMail: null };
   if (!solicitud.celular) return { resultado: { ok: false, error: 'Falta el celular.' }, datosParaMail: null };
   if (!solicitud.institucion) return { resultado: { ok: false, error: 'Falta la institución.' }, datosParaMail: null };
+  if (PROFESIONES.indexOf(solicitud.profesion) === -1) return { resultado: { ok: false, error: 'Elegí una profesión de la lista.' }, datosParaMail: null };
+  if (PROVINCIAS.indexOf(solicitud.provincia) === -1) return { resultado: { ok: false, error: 'Elegí una provincia de la lista.' }, datosParaMail: null };
   if (solicitud.turnoIds.length === 0) return { resultado: { ok: false, error: 'Elegí un turno.' }, datosParaMail: null };
 
   var lock = LockService.getScriptLock();
@@ -1441,11 +1461,14 @@ function accionPanelAlta_(datos, config, turnos) {
 function procesarAltaManual_(config, turnos) {
   var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_PANEL);
   var fila = PANEL_FILA_ALTA_DATOS;
-  var valores = hoja.getRange(fila, 1, 1, 7).getValues()[0]; // DNI,Email,Nombre,Apellido,Celular,Institución,Turno
-  var datos = { dni: valores[0], email: valores[1], nombre: valores[2], apellido: valores[3], celular: valores[4], institucion: valores[5], turnoId: valores[6] };
+  var valores = hoja.getRange(fila, 1, 1, PANEL_COL_ALTA_TURNO).getValues()[0]; // DNI,Email,Nombre,Apellido,Celular,Institución,Profesión,Provincia,Turno
+  var datos = {
+    dni: valores[0], email: valores[1], nombre: valores[2], apellido: valores[3], celular: valores[4],
+    institucion: valores[5], profesion: valores[6], provincia: valores[7], turnoId: valores[8]
+  };
   var avisarMail = hoja.getRange(PANEL_FILA_FILTRO_MAIL, 2).getValue() === true;
 
-  hoja.getRange(fila, 8).setValue(false); // destildar "Inscribir" ya, antes de cualquier otra cosa.
+  hoja.getRange(fila, PANEL_COL_ALTA_INSCRIBIR).setValue(false); // destildar ya, antes de cualquier otra cosa.
 
   var salida = accionPanelAlta_(datos, config, turnos);
   var pendiente = null;
@@ -1454,11 +1477,11 @@ function procesarAltaManual_(config, turnos) {
     if (avisarMail && salida.datosParaMail && !esDniDePrueba_(salida.datosParaMail.solicitud.dni)) {
       try { enviarMailInscripcion_(salida.datosParaMail.solicitud, salida.datosParaMail.mis, salida.datosParaMail.config); } catch (e) { /* no propagar */ }
     }
-    hoja.getRange(fila, 1, 1, 7).clearContent(); // limpiar el formulario (DNI..Turno).
-    hoja.getRange(fila, 9).setValue(salida.resultado.mensaje);
+    hoja.getRange(fila, 1, 1, PANEL_COL_ALTA_TURNO).clearContent(); // limpiar el formulario (DNI..Turno).
+    hoja.getRange(fila, PANEL_COL_ALTA_RESULTADO).setValue(salida.resultado.mensaje);
     pendiente = { idInscripcion: salida.resultado.nuevoIdInscripcion, mensaje: salida.resultado.mensaje };
   } else {
-    hoja.getRange(fila, 9).setValue('❌ ' + salida.resultado.error);
+    hoja.getRange(fila, PANEL_COL_ALTA_RESULTADO).setValue('❌ ' + salida.resultado.error);
   }
 
   regenerarPanel_(pendiente);
