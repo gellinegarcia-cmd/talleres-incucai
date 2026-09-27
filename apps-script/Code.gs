@@ -1166,6 +1166,29 @@ function armarMailAnulacion_(nombre, anulado, mis) {
   return { asunto: asunto, cuerpo: cuerpo };
 }
 
+/** Solo para "Mover" desde el Panel admin -- distinto del mail de
+ * inscripción nueva para no confundir ("parece una inscripción nueva"). */
+function armarMailMovimiento_(nombre, cambio, mis, urlApp) {
+  var asunto = 'Tu turno fue modificado – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var lineaAnular = urlApp
+    ? '<p>Si no podés asistir en este nuevo horario, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar el cupo.</p>'
+    : '<p>Si no podés asistir en este nuevo horario, anulá tu inscripción desde la misma página donde te inscribiste, para liberar el cupo.</p>';
+  var cuerpo =
+    '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
+    '<h2 style="color:' + COLOR_AZUL + ';">Hola ' + escapeHtml_(nombre) + ':</h2>' +
+    '<p>Te informamos que el Comité Organizador modificó tu turno en el taller <strong>' + escapeHtml_(cambio.taller) + '</strong>:</p>' +
+    '<p><strong>Antes:</strong> ' + fechaLarga_(cambio.fechaAntes) + ' de ' + escapeHtml_(cambio.horarioAntes) + ' (' + escapeHtml_(cambio.aulaAntes) + ')</p>' +
+    '<p><strong>Ahora:</strong> ' + fechaLarga_(cambio.fechaAhora) + ' de ' + escapeHtml_(cambio.horarioAhora) + ' (' + escapeHtml_(cambio.aulaAhora) + ')</p>' +
+    '<p>Estas son todas tus inscripciones activas actualizadas:</p>' +
+    tablaHtmlTurnos_(mis) +
+    '<p>Te recordamos que los cupos son limitados.</p>' +
+    lineaAnular +
+    '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">14 y 15 de octubre de 2026 · Centro Cultural de la Ciencia · Auditorio</p>' +
+    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    '</div>';
+  return { asunto: asunto, cuerpo: cuerpo };
+}
+
 function opcionesMail_(cuerpoHtml, config) {
   var opciones = { htmlBody: cuerpoHtml };
   if (config && config.nombre_remitente) opciones.name = String(config.nombre_remitente);
@@ -1212,6 +1235,12 @@ function enviarMailInscripcion_(solicitud, mis, config) {
 
 function enviarMailAnulacion_(datos) {
   var mail = armarMailAnulacion_(datos.nombre, datos.anulado, datos.mis);
+  enviarOEncolar_(datos.email, mail.asunto, mail.cuerpo, datos.config);
+}
+
+function enviarMailMovimiento_(datos) {
+  var urlApp = String(datos.config.url_app || '').trim();
+  var mail = armarMailMovimiento_(datos.nombre, datos.cambio, datos.mis, urlApp);
   enviarOEncolar_(datos.email, mail.asunto, mail.cuerpo, datos.config);
 }
 
@@ -1335,8 +1364,8 @@ function procesarAccionListado_(numeroFila, accionTexto, config, turnos) {
     var salida = accionPanelMover_(idInscripcion, m[1], config, turnos);
     if (salida.resultado.ok) {
       pendiente = { idInscripcion: salida.resultado.nuevoIdInscripcion, mensaje: salida.resultado.mensaje };
-      if (avisarMail && salida.datosParaMail && !esDniDePrueba_(salida.datosParaMail.solicitud.dni)) {
-        try { enviarMailInscripcion_(salida.datosParaMail.solicitud, salida.datosParaMail.mis, salida.datosParaMail.config); } catch (e) { /* no propagar */ }
+      if (avisarMail && salida.datosParaMail && !esDniDePrueba_(salida.datosParaMail.dni)) {
+        try { enviarMailMovimiento_(salida.datosParaMail); } catch (e) { /* no propagar */ }
       }
     } else {
       pendiente = { idInscripcion: idInscripcion, mensaje: '❌ ' + salida.resultado.error };
@@ -1404,7 +1433,18 @@ function accionPanelMover_(idInscripcion, turnoDestinoId, config, turnos) {
             .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula }]);
 
           resultado = { ok: true, nuevoIdInscripcion: nuevoId, mensaje: '✅ Movido a ' + ins.turno_id + '.' };
-          datosParaMail = { solicitud: { dni: original.dni, email: original.email, nombre: original.nombre }, mis: misActivas, config: config };
+          datosParaMail = {
+            dni: original.dni,
+            email: original.email,
+            nombre: original.nombre,
+            cambio: {
+              taller: original.taller,
+              fechaAntes: original.fecha, horarioAntes: original.horario, aulaAntes: original.aula,
+              fechaAhora: ins.fecha, horarioAhora: ins.horario, aulaAhora: ins.aula
+            },
+            mis: misActivas,
+            config: config
+          };
         }
       }
     }
