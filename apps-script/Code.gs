@@ -27,12 +27,10 @@ var HOJAS_OCULTAS = [SHEET_CONFIG, SHEET_COLA_MAILS, SHEET_PRIORIDAD];
 // ---- Layout fijo del Panel (filas 1-indexadas; ver regenerarPanel_) ----
 // PANEL_MAX_TURNOS ajustado al número real de turnos (12, fijos para este
 // evento) para que los totales queden inmediatamente debajo del resumen,
-// sin huecos. Si se agrega un turno nuevo hay que subir este número Y
-// correr repararEstructura_() (no alcanza con redesplegar ni con
-// "Actualizar panel" -- regenerarPanel_() sola nunca reescribe los
-// rótulos/encabezados fijos del Panel, solo los datos; si este número
-// cambia sin reconstruir el Panel entero, los datos quedan desalineados
-// de los rótulos. Ver repararEstructura_()).
+// sin huecos. Si la cantidad de turnos ACTIVOS en Turnos cambia (se
+// agrega o saca uno), regenerarPanel_() lo detecta sola comparando contra
+// PROP_PANEL_TURNOS_COUNT y reconstruye el Panel entero antes de escribir
+// datos -- no hace falta tocar este número a mano ni correr nada aparte.
 var PANEL_MAX_TURNOS = 12;
 var PANEL_MAX_LISTADO = 550; // listado: inscripciones activas filtradas (cupo total hoy = 510)
 
@@ -1310,7 +1308,10 @@ function regenerarPanelAutomatico_() {
 // regenerarPanel_.
 
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('🛠 Talleres').addItem('Actualizar panel', 'regenerarPanelDesdeMenu_').addToUi();
+  SpreadsheetApp.getUi().createMenu('🛠 Talleres')
+    .addItem('Actualizar panel', 'regenerarPanelDesdeMenu_')
+    .addItem('Reparar panel', 'repararPanelDesdeMenu_')
+    .addToUi();
   regenerarPanel_();
 }
 
@@ -1586,16 +1587,37 @@ function procesarAltaManual_(config, turnos) {
  * validaciones (desplegables/checkboxes) NO se tocan acá: no son
  * "formato" y ya se recrean donde corresponde (setupPanel para las fijas,
  * escribirFiltroTurnoOpciones_/escribirListado_ para las dinámicas). */
+/** Clave en PropertiesService para la cantidad de turnos activos con la
+ * que está armada la estructura ACTUAL del Panel -- ver regenerarPanel_. */
+var PROP_PANEL_TURNOS_COUNT = 'panelTurnosCount';
+
 function regenerarPanel_(pendiente) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var hoja = ss.getSheetByName(SHEET_PANEL);
   if (!hoja) return;
 
+  var turnos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
+
+  // Auto-detección: si la cantidad de turnos activos cambió desde la
+  // última vez que se armó la estructura del Panel, reconstruirla antes
+  // de escribir nada -- regenerarPanel_() nunca reescribe rótulos/
+  // encabezados fijos por sí sola (eso lo hace setupPanel(), adentro de
+  // repararEstructura_()), así que si la cantidad cambia sin esto los
+  // datos quedan desalineados (el bug de PANEL_MAX_TURNOS). Reemplaza
+  // tener que acordarse de correr "Reparar panel" a mano cada vez que se
+  // agrega o saca un turno en Turnos.
+  var propiedades = PropertiesService.getScriptProperties();
+  var cantidadGuardada = Number(propiedades.getProperty(PROP_PANEL_TURNOS_COUNT) || '-1');
+  if (cantidadGuardada !== turnos.length) {
+    repararEstructura_();
+    hoja = ss.getSheetByName(SHEET_PANEL); // repararEstructura_ la borra y recrea -- referencia nueva.
+    propiedades.setProperty(PROP_PANEL_TURNOS_COUNT, String(turnos.length));
+  }
+
   hoja.getRange(1, 1, hoja.getMaxRows(), hoja.getMaxColumns()).clearFormat();
   hoja.setConditionalFormatRules([]);
   formatearPanel_(hoja);
 
-  var turnos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
   var inscripciones = leerInscripciones_();
   var activas = inscripciones.filter(function (i) { return i.estado === 'ACTIVA'; });
 
@@ -1844,7 +1866,7 @@ function migrarOctubre() {
   escribirConfig_(ss, 'cierre', '2026-10-06 12:00');
 
   ocultarHojasInternas_(ss); // oculta los 2 backups recién creados (nombre contiene "Backup").
-  repararEstructura_();
+  repararPanel();
 
   console.log('Backup Turnos: ' + filasBackupTurnos + ' filas de datos movidas a "Backup Turnos ' + sello + '".');
   console.log('Backup Inscripciones: ' + filasBackupInscripciones + ' filas de datos movidas a "Backup Inscripciones ' + sello + '".');
@@ -1855,20 +1877,14 @@ function migrarOctubre() {
 }
 
 /**
- * Reconstruye las hojas DERIVADAS que quedaron desalineadas con este
- * despliegue -- no toca Turnos/Inscripciones/Config, así que es seguro
- * correrla las veces que haga falta (no borra ninguna inscripción):
- *
- * 1. Panel: se borra y se vuelve a crear entero con setupPanel(). Hace
- *    falta reconstruirlo entero (no alcanza con regenerarPanel_() sola)
- *    porque PANEL_MAX_TURNOS bajó de 13 a 12 con este cambio, y
- *    regenerarPanel_() NUNCA reescribe los rótulos/encabezados fijos
- *    (eso lo hace únicamente setupPanel()) -- solo los datos, en las
- *    filas que el código dice ahora. Sin reconstruir entero, los datos
- *    quedan una fila desplazados respecto a los rótulos viejos.
- * 2. "Por persona": ahora ordena por letra primero (antes por apellido)
- *    -- una fórmula que ya existe no se reescribe sola (setupPorPersona
- *    la deja si ya hay algo en A2), así que se fuerza el refresco acá.
+ * Reconstruye la ESTRUCTURA de las hojas derivadas -- Panel entero
+ * (se borra y se vuelve a crear con setupPanel()) y la fórmula de
+ * "Por persona" (una que ya existe no se reescribe sola, ver
+ * setupPorPersona) -- sin escribir los datos del Panel todavía (eso lo
+ * hace regenerarPanel_() a continuación, que también la llama sola si
+ * detecta que cambió la cantidad de turnos activos, ver
+ * PROP_PANEL_TURNOS_COUNT). No toca Turnos/Inscripciones/Config -- segura
+ * de correr las veces que haga falta, no borra ninguna inscripción.
  */
 function repararEstructura_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1876,11 +1892,24 @@ function repararEstructura_() {
   var hojaPanelVieja = ss.getSheetByName(SHEET_PANEL);
   if (hojaPanelVieja) ss.deleteSheet(hojaPanelVieja);
   setupPanel(ss);
-  regenerarPanel_();
 
   var hojaPorPersona = ss.getSheetByName(SHEET_POR_PERSONA);
   if (hojaPorPersona) hojaPorPersona.clear();
   setupPorPersona(ss);
+}
+
+/** Punto de entrada público: el editor de Apps Script NO lista en el
+ * desplegable "Seleccionar función" las que terminan en "_" (se tratan
+ * como privadas), así que esta es la forma de correr la reparación a
+ * mano. Reconstruye el Panel entero y escribe los datos de una. */
+function repararPanel() {
+  repararEstructura_();
+  regenerarPanel_();
+}
+
+function repararPanelDesdeMenu_() {
+  repararPanel();
+  SpreadsheetApp.getActiveSpreadsheet().toast('Panel reconstruido.', '🛠 Talleres', 4);
 }
 
 /** Copia TODOS los valores (encabezado + datos) de `nombreOrigen` a una
