@@ -196,18 +196,18 @@ var TALLER_ECO = 'Ultrasonografía en el proceso de donación';
 var TALLER_SOC = 'Cómo acompañar a los pacientes: redes, barreras y estrategias desde lo social';
 
 var TURNOS_DEFINITIVOS = [
-  ['PRN-A', TALLER_PRN, 'Sala A', '2026-10-14', '10:00', '11:30', 60, 'SI', 'A'],
-  ['PRN-B', TALLER_PRN, 'Sala A', '2026-10-14', '11:30', '13:00', 60, 'SI', 'B'],
-  ['PRN-C', TALLER_PRN, 'Sala A', '2026-10-14', '14:00', '15:30', 60, 'SI', 'C'],
-  ['PRN-D', TALLER_PRN, 'Sala A', '2026-10-14', '15:30', '17:00', 60, 'SI', 'D'],
-  ['COM-E', TALLER_COM, 'Sala B', '2026-10-14', '10:30', '12:00', 25, 'SI', 'E'],
-  ['ECO-F', TALLER_ECO, 'Sala B', '2026-10-14', '14:00', '15:30', 30, 'SI', 'F'],
-  ['ECO-G', TALLER_ECO, 'Sala B', '2026-10-14', '15:30', '17:00', 30, 'SI', 'G'],
-  ['SOC-H', TALLER_SOC, 'Sala B', '2026-10-15', '14:00', '17:00', 50, 'SI', 'H'],
-  ['COM-I', TALLER_COM, 'Sala A', '2026-10-15', '09:30', '11:00', 25, 'SI', 'I'],
-  ['COM-J', TALLER_COM, 'Sala A', '2026-10-15', '11:30', '13:00', 25, 'SI', 'J'],
-  ['ECO-K', TALLER_ECO, 'Sala A', '2026-10-15', '14:00', '15:30', 30, 'SI', 'K'],
-  ['ECO-L', TALLER_ECO, 'Sala A', '2026-10-15', '15:30', '17:00', 30, 'SI', 'L']
+  ['PRN-A', TALLER_PRN, 'Sala 1', '2026-10-14', '10:00', '11:30', 60, 'SI', 'A'],
+  ['PRN-B', TALLER_PRN, 'Sala 1', '2026-10-14', '11:30', '13:00', 60, 'SI', 'B'],
+  ['PRN-C', TALLER_PRN, 'Sala 1', '2026-10-14', '14:00', '15:30', 60, 'SI', 'C'],
+  ['PRN-D', TALLER_PRN, 'Sala 1', '2026-10-14', '15:30', '17:00', 60, 'SI', 'D'],
+  ['COM-E', TALLER_COM, 'Sala 2', '2026-10-14', '10:30', '12:00', 25, 'SI', 'E'],
+  ['ECO-F', TALLER_ECO, 'Sala 2', '2026-10-14', '14:00', '15:30', 30, 'SI', 'F'],
+  ['ECO-G', TALLER_ECO, 'Sala 2', '2026-10-14', '15:30', '17:00', 30, 'SI', 'G'],
+  ['SOC-H', TALLER_SOC, 'Sala 2', '2026-10-15', '14:00', '17:00', 50, 'SI', 'H'],
+  ['COM-I', TALLER_COM, 'Sala 1', '2026-10-15', '09:30', '11:00', 25, 'SI', 'I'],
+  ['COM-J', TALLER_COM, 'Sala 1', '2026-10-15', '11:30', '13:00', 25, 'SI', 'J'],
+  ['ECO-K', TALLER_ECO, 'Sala 1', '2026-10-15', '14:00', '15:30', 30, 'SI', 'K'],
+  ['ECO-L', TALLER_ECO, 'Sala 1', '2026-10-15', '15:30', '17:00', 30, 'SI', 'L']
 ];
 
 function construirPrecargaTurnos_() {

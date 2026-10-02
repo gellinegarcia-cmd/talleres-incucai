@@ -67,7 +67,7 @@ a. **Mail de confirmación + recordatorio a todos los inscriptos**, a
    apoyarse en el mismo mecanismo de cola de `ColaMails`/`procesarCola`).
 b. **Confirmar horario y aula de "Cómo acompañar a los pacientes..."**
    (`SOC-H` en la hoja `Turnos`): quedó cargado como único turno del
-   taller (14:00-17:00, Sala B, 15/10, cupo 50) pero falta la
+   taller (14:00-17:00, Sala 2, 15/10, cupo 50) pero falta la
    confirmación final del comité — si cambia, hay que actualizar esa
    fila en `Turnos` (la hoja `Resumen` y el Panel se actualizan solos a
    partir de ahí, no hace falta tocar código).

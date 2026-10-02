@@ -39,18 +39,18 @@ const TALLER_ECO = 'Ultrasonografía en el proceso de donación';
 const TALLER_SOC = 'Cómo acompañar a los pacientes: redes, barreras y estrategias desde lo social';
 
 const TURNOS = [
-  { id: 'PRN-A', letra: 'A', taller: TALLER_PRN, aula: 'Sala A', fecha: '2026-10-14', inicio: '10:00', fin: '11:30', cupo: 60, activo: 'SI' },
-  { id: 'PRN-B', letra: 'B', taller: TALLER_PRN, aula: 'Sala A', fecha: '2026-10-14', inicio: '11:30', fin: '13:00', cupo: 60, activo: 'SI' },
-  { id: 'PRN-C', letra: 'C', taller: TALLER_PRN, aula: 'Sala A', fecha: '2026-10-14', inicio: '14:00', fin: '15:30', cupo: 60, activo: 'SI' },
-  { id: 'PRN-D', letra: 'D', taller: TALLER_PRN, aula: 'Sala A', fecha: '2026-10-14', inicio: '15:30', fin: '17:00', cupo: 60, activo: 'SI' },
-  { id: 'COM-E', letra: 'E', taller: TALLER_COM, aula: 'Sala B', fecha: '2026-10-14', inicio: '10:30', fin: '12:00', cupo: 25, activo: 'SI' },
-  { id: 'ECO-F', letra: 'F', taller: TALLER_ECO, aula: 'Sala B', fecha: '2026-10-14', inicio: '14:00', fin: '15:30', cupo: 30, activo: 'SI' },
-  { id: 'ECO-G', letra: 'G', taller: TALLER_ECO, aula: 'Sala B', fecha: '2026-10-14', inicio: '15:30', fin: '17:00', cupo: 30, activo: 'SI' },
-  { id: 'SOC-H', letra: 'H', taller: TALLER_SOC, aula: 'Sala B', fecha: '2026-10-15', inicio: '14:00', fin: '17:00', cupo: 50, activo: 'SI' },
-  { id: 'COM-I', letra: 'I', taller: TALLER_COM, aula: 'Sala A', fecha: '2026-10-15', inicio: '09:30', fin: '11:00', cupo: 25, activo: 'SI' },
-  { id: 'COM-J', letra: 'J', taller: TALLER_COM, aula: 'Sala A', fecha: '2026-10-15', inicio: '11:30', fin: '13:00', cupo: 25, activo: 'SI' },
-  { id: 'ECO-K', letra: 'K', taller: TALLER_ECO, aula: 'Sala A', fecha: '2026-10-15', inicio: '14:00', fin: '15:30', cupo: 30, activo: 'SI' },
-  { id: 'ECO-L', letra: 'L', taller: TALLER_ECO, aula: 'Sala A', fecha: '2026-10-15', inicio: '15:30', fin: '17:00', cupo: 30, activo: 'SI' }
+  { id: 'PRN-A', letra: 'A', taller: TALLER_PRN, aula: 'Sala 1', fecha: '2026-10-14', inicio: '10:00', fin: '11:30', cupo: 60, activo: 'SI' },
+  { id: 'PRN-B', letra: 'B', taller: TALLER_PRN, aula: 'Sala 1', fecha: '2026-10-14', inicio: '11:30', fin: '13:00', cupo: 60, activo: 'SI' },
+  { id: 'PRN-C', letra: 'C', taller: TALLER_PRN, aula: 'Sala 1', fecha: '2026-10-14', inicio: '14:00', fin: '15:30', cupo: 60, activo: 'SI' },
+  { id: 'PRN-D', letra: 'D', taller: TALLER_PRN, aula: 'Sala 1', fecha: '2026-10-14', inicio: '15:30', fin: '17:00', cupo: 60, activo: 'SI' },
+  { id: 'COM-E', letra: 'E', taller: TALLER_COM, aula: 'Sala 2', fecha: '2026-10-14', inicio: '10:30', fin: '12:00', cupo: 25, activo: 'SI' },
+  { id: 'ECO-F', letra: 'F', taller: TALLER_ECO, aula: 'Sala 2', fecha: '2026-10-14', inicio: '14:00', fin: '15:30', cupo: 30, activo: 'SI' },
+  { id: 'ECO-G', letra: 'G', taller: TALLER_ECO, aula: 'Sala 2', fecha: '2026-10-14', inicio: '15:30', fin: '17:00', cupo: 30, activo: 'SI' },
+  { id: 'SOC-H', letra: 'H', taller: TALLER_SOC, aula: 'Sala 2', fecha: '2026-10-15', inicio: '14:00', fin: '17:00', cupo: 50, activo: 'SI' },
+  { id: 'COM-I', letra: 'I', taller: TALLER_COM, aula: 'Sala 1', fecha: '2026-10-15', inicio: '09:30', fin: '11:00', cupo: 25, activo: 'SI' },
+  { id: 'COM-J', letra: 'J', taller: TALLER_COM, aula: 'Sala 1', fecha: '2026-10-15', inicio: '11:30', fin: '13:00', cupo: 25, activo: 'SI' },
+  { id: 'ECO-K', letra: 'K', taller: TALLER_ECO, aula: 'Sala 1', fecha: '2026-10-15', inicio: '14:00', fin: '15:30', cupo: 30, activo: 'SI' },
+  { id: 'ECO-L', letra: 'L', taller: TALLER_ECO, aula: 'Sala 1', fecha: '2026-10-15', inicio: '15:30', fin: '17:00', cupo: 30, activo: 'SI' }
 ];
 
 function turnoPorId(id) {
