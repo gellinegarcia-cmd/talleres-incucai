@@ -584,9 +584,9 @@ function actualizarUiCierre() {
 }
 
 /** Agenda por día: dentro de cada día, TODOS los turnos (de cualquier
- * taller) ordenados por hora de inicio -- no agrupados por taller, para
- * que de un vistazo se vea qué se superpone con qué entre talleres
- * distintos (ej: Comunicación 10:30 con Asistolia 10:00-11:30). */
+ * taller) ordenados por letra A→L -- no agrupados por taller, para que
+ * de un vistazo se vea qué se superpone con qué entre talleres distintos
+ * (ej: Comunicación 10:30 con Asistolia 10:00-11:30). */
 function renderGrilla() {
   const cont = $("grilla-turnos");
   if (turnosData.length === 0) {
@@ -603,7 +603,7 @@ function renderGrilla() {
   Object.keys(porFecha).sort().forEach((fecha) => {
     html += '<div class="dia-titulo">' + fechaLarga(fecha) + '</div>';
     porFecha[fecha]
-      .sort((a, b) => a.inicio.localeCompare(b.inicio) || a.letra.localeCompare(b.letra))
+      .sort((a, b) => a.letra.localeCompare(b.letra))
       .forEach((t) => {
         html += renderTurnoItem(t);
       });

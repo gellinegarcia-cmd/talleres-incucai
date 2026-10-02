@@ -27,8 +27,12 @@ var HOJAS_OCULTAS = [SHEET_CONFIG, SHEET_COLA_MAILS, SHEET_PRIORIDAD];
 // ---- Layout fijo del Panel (filas 1-indexadas; ver regenerarPanel_) ----
 // PANEL_MAX_TURNOS ajustado al número real de turnos (12, fijos para este
 // evento) para que los totales queden inmediatamente debajo del resumen,
-// sin huecos. Si se agrega un turno nuevo hay que subir este número y
-// volver a desplegar (no hay UI para agregar turnos de todas formas).
+// sin huecos. Si se agrega un turno nuevo hay que subir este número Y
+// correr repararEstructura_() (no alcanza con redesplegar ni con
+// "Actualizar panel" -- regenerarPanel_() sola nunca reescribe los
+// rótulos/encabezados fijos del Panel, solo los datos; si este número
+// cambia sin reconstruir el Panel entero, los datos quedan desalineados
+// de los rótulos. Ver repararEstructura_()).
 var PANEL_MAX_TURNOS = 12;
 var PANEL_MAX_LISTADO = 550; // listado: inscripciones activas filtradas (cupo total hoy = 510)
 
@@ -275,18 +279,21 @@ function setupHojaTaller(ss, prefijo) {
   sheet.autoResizeColumns(1, headers.length);
 }
 
+// 'letra' primera (no al final como en Inscripciones/Turnos): acá es la
+// hoja derivada que lee la gente, y es justo la clave de orden primaria
+// (letra, después apellido) -- tiene sentido que se vea primero.
 function setupPorPersona(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_POR_PERSONA);
-  var headers = ['apellido', 'nombre', 'dni', 'email', 'celular', 'profesion', 'institucion', 'provincia', 'taller', 'fecha', 'horario', 'aula', 'timestamp'];
+  var headers = ['letra', 'apellido', 'nombre', 'dni', 'email', 'celular', 'profesion', 'institucion', 'provincia', 'taller', 'fecha', 'horario', 'aula', 'timestamp'];
   asegurarEncabezado_(sheet, headers);
   var celdaFormula = sheet.getRange('A2').getFormula();
   if (!celdaFormula) {
     var formula = '=IFERROR(SORT(FILTER({' +
-      SHEET_INSCRIPCIONES + '!F:F,' + SHEET_INSCRIPCIONES + '!E:E,' + SHEET_INSCRIPCIONES + '!C:C,' +
+      SHEET_INSCRIPCIONES + '!S:S,' + SHEET_INSCRIPCIONES + '!F:F,' + SHEET_INSCRIPCIONES + '!E:E,' + SHEET_INSCRIPCIONES + '!C:C,' +
       SHEET_INSCRIPCIONES + '!D:D,' + SHEET_INSCRIPCIONES + '!J:J,' + SHEET_INSCRIPCIONES + '!G:G,' +
       SHEET_INSCRIPCIONES + '!H:H,' + SHEET_INSCRIPCIONES + '!I:I,' + SHEET_INSCRIPCIONES + '!L:L,' +
       SHEET_INSCRIPCIONES + '!M:M,' + SHEET_INSCRIPCIONES + '!N:N,' + SHEET_INSCRIPCIONES + '!O:O,' + SHEET_INSCRIPCIONES + '!B:B' +
-      '},' + SHEET_INSCRIPCIONES + '!P:P="ACTIVA"),1,TRUE,13,TRUE),"")';
+      '},' + SHEET_INSCRIPCIONES + '!P:P="ACTIVA"),1,TRUE,2,TRUE),"")'; // 1=letra, 2=apellido
     sheet.getRange('A2').setFormula(formula);
   }
   sheet.autoResizeColumns(1, headers.length);
@@ -348,9 +355,10 @@ function setupPanel(ss) {
   hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_PROVINCIA).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(PROVINCIAS, true).setAllowInvalid(false).build()
   );
-  var turnosActivos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; });
+  var turnosActivos = leerTurnos_().filter(function (t) { return t.activo === 'SI'; })
+    .sort(function (a, b) { return compararPorLetra_(a.letra, b.letra); });
   hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_TURNO).setDataValidation(
-    SpreadsheetApp.newDataValidation().requireValueInList(turnosActivos.map(function (t) { return t.id; }).sort(compararTurnoIds_), true).setAllowInvalid(false).build()
+    SpreadsheetApp.newDataValidation().requireValueInList(turnosActivos.map(function (t) { return t.id; }), true).setAllowInvalid(false).build()
   );
   var celdaInscribir = hoja.getRange(PANEL_FILA_ALTA_DATOS, PANEL_COL_ALTA_INSCRIBIR);
   if (typeof celdaInscribir.getValue() !== 'boolean') {
@@ -436,14 +444,11 @@ function protegerPanelParcial_(hoja) {
   ]);
 }
 
-/** Orden PRN,ECO,COM,SOC (igual que en toda la app), y numérico dentro de cada taller. */
-function compararTurnoIds_(a, b) {
-  var prefijoA = buscarPrimero_(HOJAS_TALLER, function (p) { return a.indexOf(p) === 0; });
-  var prefijoB = buscarPrimero_(HOJAS_TALLER, function (p) { return b.indexOf(p) === 0; });
-  var pa = HOJAS_TALLER.indexOf(prefijoA);
-  var pb = HOJAS_TALLER.indexOf(prefijoB);
-  if (pa !== pb) return pa - pb;
-  return a.localeCompare(b, undefined, { numeric: true });
+/** Orden único por letra (A→L), cruza talleres -- es el orden "canónico"
+ * que ve la gente (app, Panel, mails, Por persona): ya no se agrupa por
+ * taller primero. */
+function compararPorLetra_(letraA, letraB) {
+  return String(letraA || '').localeCompare(String(letraB || ''));
 }
 
 // ================== ROUTER doGet ==================
@@ -1102,7 +1107,7 @@ var NOMBRE_EVENTO_FECHA_LUGAR = NOMBRE_EVENTO + ' — 14 y 15 de octubre 2026 ·
 var FOOTER_MAIL_ = '<p style="color:#777;font-size:13px;">Comité Organizador – ' + NOMBRE_EVENTO + '</p>';
 
 function tablaHtmlTurnos_(lista) {
-  var filas = lista.map(function (t) {
+  var filas = lista.slice().sort(function (a, b) { return compararPorLetra_(a.letra, b.letra); }).map(function (t) {
     var etiquetaTaller = t.letra ? 'Taller ' + t.letra + ' · ' + escapeHtml_(t.taller) : escapeHtml_(t.taller);
     return '<tr>' +
       '<td style="padding:8px;border-bottom:1px solid #eee;">' + etiquetaTaller + '</td>' +
@@ -1281,6 +1286,19 @@ function instalarTrigger() {
   if (!existeEdit) {
     ScriptApp.newTrigger('onEditInstalablePanel_').forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onEdit().create();
   }
+
+  var existeRefresco = disparadores.some(function (t) { return t.getHandlerFunction() === 'regenerarPanelAutomatico_'; });
+  if (!existeRefresco) {
+    ScriptApp.newTrigger('regenerarPanelAutomatico_').timeBased().everyMinutes(5).create();
+  }
+}
+
+/** Disparador temporal (cada 5 min, ver instalarTrigger): refresca el
+ * Panel solo. Función propia (no apuntar el trigger directo a
+ * regenerarPanel_) para no pasarle el objeto evento del trigger como si
+ * fuera el parámetro `pendiente`. */
+function regenerarPanelAutomatico_() {
+  regenerarPanel_();
 }
 
 // ================== PANEL ADMIN ==================
@@ -1581,8 +1599,12 @@ function regenerarPanel_(pendiente) {
   var inscripciones = leerInscripciones_();
   var activas = inscripciones.filter(function (i) { return i.estado === 'ACTIVA'; });
 
-  hoja.getRange(PANEL_FILA_ACTUALIZADO, 1).setValue('Actualizado: ' + Utilities.formatDate(new Date(), TZ, 'dd/MM HH:mm'));
+  hoja.getRange(PANEL_FILA_ACTUALIZADO, 1).setValue(
+    'Actualizado: ' + Utilities.formatDate(new Date(), TZ, 'dd/MM HH:mm') +
+    '  (se actualiza solo cada 5 min · 🛠 Talleres → Actualizar panel para verlo ya)'
+  );
 
+  asegurarFiltroTallerValido_(hoja);
   escribirResumen_(hoja, turnos, activas);
   escribirTotales_(hoja, turnos, activas);
   escribirFiltroTurnoOpciones_(hoja, turnos);
@@ -1656,7 +1678,7 @@ function escribirResumen_(hoja, turnos, activas) {
   var rango = hoja.getRange(PANEL_FILA_RESUMEN_DATOS, 1, PANEL_MAX_TURNOS, 11);
   rango.clearContent();
 
-  var ordenados = turnos.slice().sort(function (a, b) { return compararTurnoIds_(a.id, b.id); }).slice(0, PANEL_MAX_TURNOS);
+  var ordenados = turnos.slice().sort(function (a, b) { return compararPorLetra_(a.letra, b.letra); }).slice(0, PANEL_MAX_TURNOS);
   var filas = ordenados.map(function (t) {
     var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
     var disponibles = Math.max(t.cupo - ocupados, 0);
@@ -1693,12 +1715,24 @@ function escribirTotales_(hoja, turnos, activas) {
 }
 
 function escribirFiltroTurnoOpciones_(hoja, turnos) {
-  var opciones = ['Todos'].concat(turnos.map(function (t) { return t.id; }).sort(compararTurnoIds_));
+  var opciones = ['Todos'].concat(
+    turnos.slice().sort(function (a, b) { return compararPorLetra_(a.letra, b.letra); }).map(function (t) { return t.id; })
+  );
   var celda = hoja.getRange(PANEL_FILA_FILTRO_TURNO, 2);
   celda.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(opciones, true).setAllowInvalid(false).build());
   var actual = String(celda.getValue() || '').trim();
   if (!actual) { celda.setValue('Todos'); return; }
   if (opciones.indexOf(actual) === -1) celda.setValue('Todos'); // turno dado de baja: no dejar el filtro roto.
+}
+
+/** Mismo criterio que el filtro de Turno de arriba: si el filtro de
+ * Taller quedó en un prefijo que ya no existe (p.ej. se sacó un taller
+ * entero de HOJAS_TALLER), lo resetea a "Todos" en vez de dejarlo roto. */
+function asegurarFiltroTallerValido_(hoja) {
+  var celda = hoja.getRange(PANEL_FILA_FILTRO_TALLER, 2);
+  var actual = String(celda.getValue() || '').trim();
+  var valido = ['Todos'].concat(HOJAS_TALLER).indexOf(actual) !== -1;
+  if (!valido) celda.setValue('Todos');
 }
 
 function escribirListado_(hoja, turnos, activas, pendiente) {
@@ -1711,7 +1745,7 @@ function escribirListado_(hoja, turnos, activas, pendiente) {
     return true;
   });
   filtradas.sort(function (a, b) {
-    var c = compararTurnoIds_(a.turno_id, b.turno_id);
+    var c = compararPorLetra_(a.letra, b.letra);
     return c !== 0 ? c : a.apellido.localeCompare(b.apellido);
   });
   filtradas = filtradas.slice(0, PANEL_MAX_LISTADO);
@@ -1734,7 +1768,7 @@ function escribirListado_(hoja, turnos, activas, pendiente) {
     var opciones = ['Dar de baja'].concat(
       turnos
         .filter(function (t) { return prefijo && t.id.indexOf(prefijo) === 0 && t.id !== insc.turno_id; })
-        .sort(function (a, b) { return compararTurnoIds_(a.id, b.id); })
+        .sort(function (a, b) { return compararPorLetra_(a.letra, b.letra); })
         .map(function (t) { return 'Mover a ' + t.id + ' (' + t.inicio + '-' + t.fin + ')'; })
     );
     var validacion = SpreadsheetApp.newDataValidation().requireValueInList(opciones, true).setAllowInvalid(false).build();
@@ -1810,14 +1844,43 @@ function migrarOctubre() {
   escribirConfig_(ss, 'cierre', '2026-10-06 12:00');
 
   ocultarHojasInternas_(ss); // oculta los 2 backups recién creados (nombre contiene "Backup").
-  regenerarPanel_();
+  repararEstructura_();
 
   console.log('Backup Turnos: ' + filasBackupTurnos + ' filas de datos movidas a "Backup Turnos ' + sello + '".');
   console.log('Backup Inscripciones: ' + filasBackupInscripciones + ' filas de datos movidas a "Backup Inscripciones ' + sello + '".');
   console.log('Turnos reemplazados por los ' + TURNOS_DEFINITIVOS.length + ' definitivos (A-L).');
   console.log('Inscripciones y ColaMails vaciadas (quedan los encabezados).');
   console.log('Config actualizada: nombre_remitente, cierre = 2026-10-06 12:00.');
-  console.log('Panel regenerado.');
+  console.log('Panel reconstruido y "Por persona" reordenada por letra.');
+}
+
+/**
+ * Reconstruye las hojas DERIVADAS que quedaron desalineadas con este
+ * despliegue -- no toca Turnos/Inscripciones/Config, así que es seguro
+ * correrla las veces que haga falta (no borra ninguna inscripción):
+ *
+ * 1. Panel: se borra y se vuelve a crear entero con setupPanel(). Hace
+ *    falta reconstruirlo entero (no alcanza con regenerarPanel_() sola)
+ *    porque PANEL_MAX_TURNOS bajó de 13 a 12 con este cambio, y
+ *    regenerarPanel_() NUNCA reescribe los rótulos/encabezados fijos
+ *    (eso lo hace únicamente setupPanel()) -- solo los datos, en las
+ *    filas que el código dice ahora. Sin reconstruir entero, los datos
+ *    quedan una fila desplazados respecto a los rótulos viejos.
+ * 2. "Por persona": ahora ordena por letra primero (antes por apellido)
+ *    -- una fórmula que ya existe no se reescribe sola (setupPorPersona
+ *    la deja si ya hay algo en A2), así que se fuerza el refresco acá.
+ */
+function repararEstructura_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var hojaPanelVieja = ss.getSheetByName(SHEET_PANEL);
+  if (hojaPanelVieja) ss.deleteSheet(hojaPanelVieja);
+  setupPanel(ss);
+  regenerarPanel_();
+
+  var hojaPorPersona = ss.getSheetByName(SHEET_POR_PERSONA);
+  if (hojaPorPersona) hojaPorPersona.clear();
+  setupPorPersona(ss);
 }
 
 /** Copia TODOS los valores (encabezado + datos) de `nombreOrigen` a una
