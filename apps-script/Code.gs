@@ -1,8 +1,9 @@
 /**
- * Talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI
+ * Encuentro Nacional Innovación y Nuevas Tecnologías en Donación y Trasplante
  * Backend Google Apps Script (Web App) + Google Sheets como base de datos.
  * Zona horaria: America/Argentina/Buenos_Aires en todo.
- * Versión revisada (fix: fila al anular, celulares con "+", IDs únicos, remitente en cola).
+ * Versión unificada (octubre 2026): un solo link sin fases/tokens, tope de
+ * 2 talleres por persona, cierre automático de inscripciones, turnos A-L.
  */
 
 // ================== CONSTANTES ==================
@@ -15,7 +16,7 @@ var SHEET_POR_PERSONA = 'Por persona';
 var SHEET_COLA_MAILS = 'ColaMails';
 var SHEET_PRIORIDAD = 'Prioridad';
 var SHEET_PANEL = 'Panel';
-var HOJAS_TALLER = ['PRN', 'ECO', 'COM', 'SOC']; // prefijo de id de turno == nombre de hoja == prefijo de token de fase 1
+var HOJAS_TALLER = ['PRN', 'ECO', 'COM', 'SOC']; // prefijo de id de turno == nombre de hoja
 
 // Hojas de datos: solo el dueño edita (protegidas en setup). El Panel es
 // la única superficie de escritura para el jefe del comité.
@@ -24,11 +25,11 @@ var HOJAS_SOLO_LECTURA = [SHEET_INSCRIPCIONES, SHEET_TURNOS, SHEET_RESUMEN, SHEE
 var HOJAS_OCULTAS = [SHEET_CONFIG, SHEET_COLA_MAILS, SHEET_PRIORIDAD];
 
 // ---- Layout fijo del Panel (filas 1-indexadas; ver regenerarPanel_) ----
-// PANEL_MAX_TURNOS ajustado al número real de turnos (13, fijos para este
+// PANEL_MAX_TURNOS ajustado al número real de turnos (12, fijos para este
 // evento) para que los totales queden inmediatamente debajo del resumen,
 // sin huecos. Si se agrega un turno nuevo hay que subir este número y
 // volver a desplegar (no hay UI para agregar turnos de todas formas).
-var PANEL_MAX_TURNOS = 13;
+var PANEL_MAX_TURNOS = 12;
 var PANEL_MAX_LISTADO = 550; // listado: inscripciones activas filtradas (cupo total hoy = 510)
 
 var PANEL_FILA_TITULO = 1;
@@ -78,8 +79,12 @@ var COLOR_DORADO = '#E3B868';
 var MAX_INTENTOS_MAIL = 3;
 var PREFIJO_DNI_PRUEBA = '99000';
 
-var INSCRIPCIONES_HEADERS = ['id_inscripcion', 'timestamp', 'dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular', 'turno_id', 'taller', 'fecha', 'horario', 'aula', 'estado', 'fecha_anulacion', 'fase'];
-var TURNOS_HEADERS = ['id', 'taller', 'aula', 'fecha', 'inicio', 'fin', 'cupo', 'activo'];
+// 'letra' va AL FINAL en los dos (columna S en Inscripciones, columna I en
+// Turnos) a propósito: las fórmulas de Resumen/hojas de taller/Por persona
+// referencian columnas A..R de Inscripciones y A..G de Turnos por letra
+// fija -- agregar una columna en el medio las rompería.
+var INSCRIPCIONES_HEADERS = ['id_inscripcion', 'timestamp', 'dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular', 'turno_id', 'taller', 'fecha', 'horario', 'aula', 'estado', 'fecha_anulacion', 'fase', 'letra'];
+var TURNOS_HEADERS = ['id', 'taller', 'aula', 'fecha', 'inicio', 'fin', 'cupo', 'activo', 'letra'];
 var CONFIG_HEADERS = ['clave', 'valor'];
 var COLA_MAILS_HEADERS = ['timestamp', 'email', 'asunto', 'cuerpo_html', 'estado', 'intentos'];
 var PRIORIDAD_HEADERS = ['dni', 'email', 'taller'];
@@ -133,17 +138,13 @@ function asegurarEncabezado_(sheet, headers) {
 function setupConfig(ss) {
   var sheet = getOrCreateSheet_(ss, SHEET_CONFIG);
   asegurarEncabezado_(sheet, CONFIG_HEADERS);
-  var claves = ['inscripcion_abierta', 'nombre_remitente', 'reply_to', 'url_app', 'fase',
-    'token_PRN', 'token_ECO', 'token_COM', 'token_SOC', 'mensaje_fase1'];
+  var claves = ['inscripcion_abierta', 'nombre_remitente', 'reply_to', 'url_app', 'cierre'];
   var valoresPorDefecto = {
     inscripcion_abierta: 'SI',
-    nombre_remitente: 'Comité Organizador 1era Jornada Nacional de Donación y Trasplante INCUCAI',
+    nombre_remitente: 'Comité Organizador – Encuentro Nacional Innovación y Nuevas Tecnologías en Donación y Trasplante',
     reply_to: '',
     url_app: '',
-    fase: '1',
-    mensaje_fase1: 'En este momento la inscripción es exclusiva para personas preasignadas a cada taller por el Comité Organizador. Pronto se abrirán las inscripciones generales.'
-    // token_PRN/ECO/COM/SOC no tienen default fijo -- se generan al azar
-    // acá abajo, solo la primera vez (si la clave ya existe, no se toca).
+    cierre: ''
   };
   var existentes = sheet.getLastRow() > 1
     ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(function (r) { return r[0]; })
@@ -151,22 +152,11 @@ function setupConfig(ss) {
   var filaLibre = sheet.getLastRow() + 1;
   claves.forEach(function (clave) {
     if (existentes.indexOf(clave) === -1) {
-      var valor = clave.indexOf('token_') === 0 ? generarToken_() : valoresPorDefecto[clave];
-      sheet.getRange(filaLibre, 1, 1, 2).setValues([[clave, valor]]);
+      sheet.getRange(filaLibre, 1, 1, 2).setValues([[clave, valoresPorDefecto[clave]]]);
       filaLibre++;
     }
   });
   sheet.autoResizeColumns(1, 2);
-}
-
-/** Token de 8 caracteres (minúsculas + números) para los links de fase 1. */
-function generarToken_() {
-  var alfabeto = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  var token = '';
-  for (var i = 0; i < 8; i++) {
-    token += alfabeto.charAt(Math.floor(Math.random() * alfabeto.length));
-  }
-  return token;
 }
 
 function setupPrioridad(ss) {
@@ -195,25 +185,31 @@ function setupTurnos(ss) {
   sheet.autoResizeColumns(1, TURNOS_HEADERS.length);
 }
 
+// Turnos definitivos (octubre 2026): A-L, sin saltos. Única fuente de
+// verdad reusada por setupTurnos() (instalación nueva) y migrarOctubre()
+// (reemplazo total de una planilla existente) -- ver TURNOS_DEFINITIVOS.
+var TALLER_PRN = 'Donación en asistolia controlada y perfusión regional normotérmica';
+var TALLER_COM = 'Comunicación en el proceso de donación';
+var TALLER_ECO = 'Ultrasonografía en el proceso de donación';
+var TALLER_SOC = 'Cómo acompañar a los pacientes: redes, barreras y estrategias desde lo social';
+
+var TURNOS_DEFINITIVOS = [
+  ['PRN-A', TALLER_PRN, 'Sala A', '2026-10-14', '10:00', '11:30', 60, 'SI', 'A'],
+  ['PRN-B', TALLER_PRN, 'Sala A', '2026-10-14', '11:30', '13:00', 60, 'SI', 'B'],
+  ['PRN-C', TALLER_PRN, 'Sala A', '2026-10-14', '14:00', '15:30', 60, 'SI', 'C'],
+  ['PRN-D', TALLER_PRN, 'Sala A', '2026-10-14', '15:30', '17:00', 60, 'SI', 'D'],
+  ['COM-E', TALLER_COM, 'Sala B', '2026-10-14', '10:30', '12:00', 25, 'SI', 'E'],
+  ['ECO-F', TALLER_ECO, 'Sala B', '2026-10-14', '14:00', '15:30', 30, 'SI', 'F'],
+  ['ECO-G', TALLER_ECO, 'Sala B', '2026-10-14', '15:30', '17:00', 30, 'SI', 'G'],
+  ['SOC-H', TALLER_SOC, 'Sala B', '2026-10-15', '14:00', '17:00', 50, 'SI', 'H'],
+  ['COM-I', TALLER_COM, 'Sala A', '2026-10-15', '09:30', '11:00', 25, 'SI', 'I'],
+  ['COM-J', TALLER_COM, 'Sala A', '2026-10-15', '11:30', '13:00', 25, 'SI', 'J'],
+  ['ECO-K', TALLER_ECO, 'Sala A', '2026-10-15', '14:00', '15:30', 30, 'SI', 'K'],
+  ['ECO-L', TALLER_ECO, 'Sala A', '2026-10-15', '15:30', '17:00', 30, 'SI', 'L']
+];
+
 function construirPrecargaTurnos_() {
-  var horariosPRNECO = [['10:00', '11:30'], ['11:30', '13:00'], ['14:00', '15:30'], ['15:30', '17:00']];
-  var filas = [];
-
-  horariosPRNECO.forEach(function (h, i) {
-    filas.push(['PRN-' + (i + 1), 'Perfusión regional normotérmica', 'Aula A', '2026-10-14', h[0], h[1], 60, 'SI']);
-  });
-  horariosPRNECO.forEach(function (h, i) {
-    filas.push(['ECO-' + (i + 1), 'Ultrasonografía en donación', 'Aula B', '2026-10-14', h[0], h[1], 30, 'SI']);
-  });
-
-  var horariosCOM = [['10:00', '11:00'], ['11:00', '12:00'], ['14:00', '15:00'], ['15:00', '16:00']];
-  horariosCOM.forEach(function (h, i) {
-    filas.push(['COM-' + (i + 1), 'Comunicación en donación', 'Aula A', '2026-10-15', h[0], h[1], 25, 'SI']);
-  });
-
-  filas.push(['SOC-1', 'Acompañamiento social', 'Aula B', '2026-10-15', '14:00', '17:00', 50, 'SI']);
-
-  return filas;
+  return TURNOS_DEFINITIVOS.slice();
 }
 
 function setupInscripciones(ss) {
@@ -310,7 +306,7 @@ function setupPanel(ss) {
   ss.moveActiveSheet(1); // primera pestaña, siempre.
 
   if (!hoja.getRange('A1').getValue()) {
-    hoja.getRange('A1').setValue('Panel de talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI');
+    hoja.getRange('A1').setValue('Panel de talleres — ' + NOMBRE_EVENTO);
   }
 
   // RESUMEN: Taller en A:D combinada (nombres largos), Aula/Día y horario/
@@ -543,7 +539,8 @@ function leerTurnos_() {
         inicio: normalizarHora_(f[4]),
         fin: normalizarHora_(f[5]),
         cupo: Number(f[6]),
-        activo: String(f[7]).trim().toUpperCase()
+        activo: String(f[7]).trim().toUpperCase(),
+        letra: String(f[8] || '').trim()
       };
     });
 }
@@ -580,39 +577,30 @@ function leerInscripciones_() {
         aula: String(f[14]),
         estado: String(f[15]).trim().toUpperCase(),
         fecha_anulacion: f[16],
-        fase: f[17]
-      };
-    });
-}
-
-/** Hoja "Prioridad" (dni | email | taller) -- lista de preasignados para
- * fase 1. [] si está vacía (en ese caso, accionInscribir no chequea nada). */
-function leerPrioridad_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_PRIORIDAD);
-  var n = Math.max(sheet.getLastRow() - 1, 0);
-  if (n === 0) return [];
-  var filas = sheet.getRange(2, 1, n, PRIORIDAD_HEADERS.length).getValues();
-  return filas
-    .filter(function (f) { return f[0] || f[1]; })
-    .map(function (f) {
-      return {
-        dni: normalizarDni_(f[0]),
-        email: normalizarEmail_(f[1]),
-        taller_prefijo: String(f[2] || '').trim().toUpperCase()
+        fase: f[17],
+        letra: String(f[18] || '').trim()
       };
     });
 }
 
 // ================== VALIDACIÓN PURA (testeable en Node) ==================
 
+/** Texto "Taller X (fecha, horario)" para listar inscripciones en mensajes. */
+function etiquetaTurno_(ref) {
+  return ref.taller + ' (' + fechaCorta_(ref.fecha) + ' de ' + ref.inicio + ' a ' + ref.fin + ')';
+}
+
+var MAX_TALLERES_POR_PERSONA = 2;
+
 /**
  * Por cada turno pedido, en orden:
  * 1. Ya inscripto en ESE turno.
- * 2. Ya inscripto en el MISMO taller, otro turno.
- * 3. Dos turnos del mismo taller en la misma solicitud.
- * 4. Superposición horaria.
- * 5. Cupo.
+ * 2. Tope de MAX_TALLERES_POR_PERSONA inscripciones activas (existentes +
+ *    aceptadas en esta misma solicitud).
+ * 3. Ya inscripto en el MISMO taller, otro turno.
+ * 4. Dos turnos del mismo taller en la misma solicitud.
+ * 5. Superposición horaria.
+ * 6. Cupo.
  * Sin APIs de Google — testeable en Node.
  */
 function validar(solicitud, inscripcionesExistentes, turnos) {
@@ -625,6 +613,9 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
   var rechazados = [];
 
   var idsSolicitados = solicitud.turnoIds || [];
+  var propiasActivas = activas
+    .filter(function (i) { return i.dni === solicitud.dni; })
+    .map(function (i) { return resolverTurnoDeInscripcion_(i, turnosPorId); });
 
   idsSolicitados.forEach(function (turnoId) {
     var turno = turnosPorId[turnoId];
@@ -645,7 +636,18 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 2. Ya inscripto en el MISMO taller, otro turno.
+    // 2. Tope de talleres por persona (existentes + aceptados en esta solicitud).
+    var actuales = propiasActivas.concat(aceptados);
+    if (actuales.length >= MAX_TALLERES_POR_PERSONA) {
+      var listaActuales = actuales.map(etiquetaTurno_).join(' y ');
+      rechazados.push({
+        turno_id: turnoId,
+        motivo: 'Podés inscribirte en un máximo de ' + MAX_TALLERES_POR_PERSONA + ' talleres. Ya estás inscripto/a en: ' + listaActuales + '. Si querés cambiar, primero anulá uno.'
+      });
+      return;
+    }
+
+    // 3. Ya inscripto en el MISMO taller, otro turno.
     var mismoTallerExistente = buscarPrimero_(activas, function (i) {
       return i.dni === solicitud.dni && resolverTurnoDeInscripcion_(i, turnosPorId).taller === turno.taller;
     });
@@ -658,7 +660,7 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 3. Dos turnos del mismo taller en la misma solicitud.
+    // 4. Dos turnos del mismo taller en la misma solicitud.
     var mismoTallerAceptado = buscarPrimero_(aceptados, function (a) { return a.taller === turno.taller; });
     if (mismoTallerAceptado) {
       rechazados.push({
@@ -668,11 +670,8 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 4. Superposición horaria.
-    var referencias = activas
-      .filter(function (i) { return i.dni === solicitud.dni; })
-      .map(function (i) { return resolverTurnoDeInscripcion_(i, turnosPorId); })
-      .concat(aceptados);
+    // 5. Superposición horaria.
+    var referencias = propiasActivas.concat(aceptados);
     var conflicto = buscarPrimero_(referencias, function (r) {
       return seSuperponen_(turno.fecha, turno.inicio, turno.fin, r.fecha, r.inicio, r.fin);
     });
@@ -684,27 +683,30 @@ function validar(solicitud, inscripcionesExistentes, turnos) {
       return;
     }
 
-    // 5. Cupo.
+    // 6. Cupo.
     var ocupados = activas.filter(function (i) { return i.turno_id === turnoId; }).length;
     if (ocupados >= turno.cupo) {
       rechazados.push({ turno_id: turnoId, motivo: 'Sin cupo disponible en este turno.' });
       return;
     }
 
-    aceptados.push({ turno_id: turnoId, taller: turno.taller, fecha: turno.fecha, inicio: turno.inicio, fin: turno.fin, aula: turno.aula });
+    aceptados.push({ turno_id: turnoId, taller: turno.taller, fecha: turno.fecha, inicio: turno.inicio, fin: turno.fin, aula: turno.aula, letra: turno.letra });
     inscriptos.push({
       turno_id: turnoId,
       taller: turno.taller,
       fecha: turno.fecha,
       horario: turno.inicio + '-' + turno.fin,
-      aula: turno.aula
+      aula: turno.aula,
+      letra: turno.letra
     });
   });
 
   return { ok: true, inscriptos: inscriptos, rechazados: rechazados };
 }
 
-/** Validaciones generales (campos, DNI, email, compromiso, al menos un turno). */
+/** Validaciones generales (campos, DNI, email, declaración, compromiso, al
+ * menos un turno). Sin fases ni tokens -- un solo link, las mismas reglas
+ * para todos. */
 function validarDatosGenerales(solicitud) {
   var obligatorios = ['dni', 'email', 'nombre', 'apellido', 'profesion', 'institucion', 'provincia', 'celular'];
   for (var i = 0; i < obligatorios.length; i++) {
@@ -718,6 +720,9 @@ function validarDatosGenerales(solicitud) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(solicitud.email).trim())) {
     return { ok: false, error: 'El email no es válido.' };
   }
+  if (solicitud.declaracion !== 'SI') {
+    return { ok: false, error: 'Tenés que declarar que recibiste la invitación del Comité Organizador.' };
+  }
   if (solicitud.compromiso !== 'SI') {
     return { ok: false, error: 'Tenés que aceptar el compromiso de asistencia.' };
   }
@@ -725,64 +730,6 @@ function validarDatosGenerales(solicitud) {
     return { ok: false, error: 'Elegí al menos un turno.' };
   }
   return { ok: true };
-}
-
-// ---- Fase 1 (inscripción prioritaria) -- puro, sin APIs de Google. ----
-
-/** '1' (o 1) -> fase 1. Cualquier otra cosa (incluido vacío) -> fase 2 (abierta). */
-function normalizarFase_(v) {
-  return String(v || '').trim() === '1' ? 1 : 2;
-}
-
-/** tokens = { PRN: 'abc123xy', ECO: '...', COM: '...', SOC: '...' } (de Config).
- * Devuelve el prefijo de taller (PRN/ECO/COM/SOC) si el token coincide
- * (case-insensitive), o null si no coincide con ninguno / viene vacío. */
-function resolverPrefijoToken_(tokenCrudo, tokens) {
-  var token = String(tokenCrudo || '').trim().toLowerCase();
-  if (!token) return null;
-  for (var i = 0; i < HOJAS_TALLER.length; i++) {
-    var prefijo = HOJAS_TALLER[i];
-    if (tokens[prefijo] && String(tokens[prefijo]).trim().toLowerCase() === token) return prefijo;
-  }
-  return null;
-}
-
-/**
- * Validaciones específicas de fase 1: token válido, todos los turnos
- * pedidos del taller de ese token, declaración=SI, y (solo si la hoja
- * Prioridad tiene filas) dni o email presentes ahí para ese taller.
- * prioridad = [{dni, email, taller_prefijo}, ...] ([] si la hoja está vacía).
- * Devuelve {ok:true, prefijo} o {ok:false, error}.
- */
-function validarFase1_(tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad) {
-  var prefijo = resolverPrefijoToken_(tokenCrudo, tokens);
-  if (!prefijo) {
-    return { ok: false, error: 'Token inválido o faltante para esta fase.' };
-  }
-  var turnoDeOtroTaller = (turnoIds || []).some(function (id) { return id.indexOf(prefijo) !== 0; });
-  if (turnoDeOtroTaller) {
-    return { ok: false, error: 'En esta fase solo podés inscribirte a turnos de tu taller asignado.' };
-  }
-  if (String(declaracionCruda || '').trim().toUpperCase() !== 'SI') {
-    return { ok: false, error: 'Tenés que declarar que fuiste asignado/a a este taller.' };
-  }
-  if (prioridad.length > 0) {
-    var enLista = prioridad.some(function (p) {
-      return p.taller_prefijo === prefijo && (p.dni === dni || p.email === email);
-    });
-    if (!enLista) {
-      return { ok: false, error: 'No encontramos tu DNI/email en la lista de preasignados a este taller. Si creés que es un error, escribí a los organizadores.' };
-    }
-  }
-  return { ok: true, prefijo: prefijo };
-}
-
-/** Punto de entrada por fase: fase 2 (o cualquier valor que no sea "1")
- * no aplica NINGÚN gating de fase 1 -- ignora token, declaración y
- * Prioridad por completo. */
-function validarSolicitudFase_(fase, tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad) {
-  if (normalizarFase_(fase) !== 1) return { ok: true };
-  return validarFase1_(tokenCrudo, turnoIds, declaracionCruda, dni, email, tokens, prioridad);
 }
 
 function buscarPrimero_(arr, pred) {
@@ -824,20 +771,71 @@ function fechaCorta_(iso) {
   return partes[2] + '/' + partes[1];
 }
 
+// ---- Cierre automático de inscripciones (Config!cierre). Puro: recibe un
+// `ahora` explícito en vez de llamar a new Date() adentro, así es
+// testeable en Node sin depender del reloj real. ----
+
+var DIAS_ES_ = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']; // índice = Date.getDay()
+var MESES_ES_ = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/** "YYYY-MM-DD HH:MM" (hora Argentina, UTC-3 todo el año) -> Date real.
+ * '' o formato inválido -> null (sin cierre configurado). */
+function parsearFechaHoraArg_(s) {
+  var m = /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/.exec(String(s || '').trim());
+  if (!m) return null;
+  return new Date(m[1] + '-' + pad2_(+m[2]) + '-' + pad2_(+m[3]) + 'T' + pad2_(+m[4]) + ':' + m[5] + ':00-03:00');
+}
+
+/** true si `ahora` ya pasó el cierre configurado. Sin cierre (''/inválido) -> nunca cierra. */
+function inscripcionesCerradas_(ahora, cierreStr) {
+  var cierre = parsearFechaHoraArg_(cierreStr);
+  if (!cierre) return false;
+  return ahora.getTime() > cierre.getTime();
+}
+
+/** "martes 6 de octubre a las 12 h" -- con Utilities.formatDate(TZ, patrón
+ * NUMÉRICO) para cada componente: 'EEEE'/'MMMM' dependen del locale del
+ * script y en la práctica suelen salir en inglés aunque el TZ sea
+ * Argentina; los patrones numéricos ('u','d','M','H') no. Java 'u':
+ * 1=lunes..7=domingo -> %7 para calzar con el índice de DIAS_ES_ (0=domingo). */
+function fechaHoraLargaEs_(date) {
+  var dia = DIAS_ES_[Number(Utilities.formatDate(date, TZ, 'u')) % 7];
+  var diaMes = Number(Utilities.formatDate(date, TZ, 'd'));
+  var mes = MESES_ES_[Number(Utilities.formatDate(date, TZ, 'M')) - 1];
+  var hora = Number(Utilities.formatDate(date, TZ, 'H'));
+  return dia + ' ' + diaMes + ' de ' + mes + ' a las ' + hora + ' h';
+}
+
+function mensajeCierre_(cierreStr) {
+  var cierre = parsearFechaHoraArg_(cierreStr);
+  if (!cierre) return 'Las inscripciones están cerradas.';
+  return 'Las inscripciones cerraron el ' + fechaHoraLargaEs_(cierre) + '.';
+}
+
+function mensajeAbiertaHasta_(cierreStr) {
+  var cierre = parsearFechaHoraArg_(cierreStr);
+  if (!cierre) return '';
+  return 'Inscripciones abiertas hasta el ' + fechaHoraLargaEs_(cierre) + '.';
+}
+
 // ================== ACCIONES ==================
 
+/** Un solo link, toda la oferta siempre: `tokenCrudo` (parámetro `t` de un
+ * link viejo) se acepta por compatibilidad pero se ignora por completo --
+ * no cambia en nada lo que se devuelve. */
 function accionTurnos(tokenCrudo) {
   var turnos = leerTurnos_();
   var inscripciones = leerInscripciones_();
   var activas = inscripciones.filter(function (i) { return i.estado === 'ACTIVA'; });
   var config = leerConfig_();
   var abierta = String(config.inscripcion_abierta || '').trim().toUpperCase() === 'SI';
-  var fase = normalizarFase_(config.fase);
+  var cerrado = inscripcionesCerradas_(new Date(), config.cierre);
 
   function formatearTurno(t) {
     var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
     return {
       id: t.id,
+      letra: t.letra,
       taller: t.taller,
       aula: t.aula,
       fecha: t.fecha,
@@ -849,19 +847,16 @@ function accionTurnos(tokenCrudo) {
     };
   }
 
-  if (fase === 1) {
-    var tokens = { PRN: config.token_PRN, ECO: config.token_ECO, COM: config.token_COM, SOC: config.token_SOC };
-    var prefijo = resolverPrefijoToken_(tokenCrudo, tokens);
-    if (!prefijo) {
-      return { ok: true, inscripcion_abierta: abierta, fase: 1, taller: null, turnos: [], mensaje: config.mensaje_fase1 || '' };
-    }
-    var turnosDelTaller = turnos.filter(function (t) { return t.activo === 'SI' && t.id.indexOf(prefijo) === 0; });
-    var nombreTaller = turnosDelTaller.length > 0 ? turnosDelTaller[0].taller : '';
-    return { ok: true, inscripcion_abierta: abierta, fase: 1, taller: nombreTaller, turnos: turnosDelTaller.map(formatearTurno) };
-  }
-
   var todos = turnos.filter(function (t) { return t.activo === 'SI'; }).map(formatearTurno);
-  return { ok: true, inscripcion_abierta: abierta, fase: 2, turnos: todos };
+  return {
+    ok: true,
+    inscripcion_abierta: abierta,
+    cierre: config.cierre || '',
+    cerrado: cerrado,
+    mensaje_abierta_hasta: mensajeAbiertaHasta_(config.cierre),
+    mensaje_cierre: mensajeCierre_(config.cierre),
+    turnos: todos
+  };
 }
 
 function normalizarDni_(dni) {
@@ -902,7 +897,8 @@ function formatearInscripcionSalida_(i) {
     taller: i.taller,
     fecha: i.fecha,
     horario: i.horario,
-    aula: i.aula
+    aula: i.aula,
+    letra: i.letra
   };
 }
 
@@ -929,6 +925,7 @@ function accionInscribir(params) {
     provincia: String(params.provincia || '').trim(),
     celular: String(params.celular || '').trim(),
     compromiso: String(params.compromiso || '').trim().toUpperCase(),
+    declaracion: String(params.declaracion || '').trim().toUpperCase(),
     turnoIds: String(params.turnos || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean)
   };
 
@@ -943,17 +940,10 @@ function accionInscribir(params) {
   if (String(config.inscripcion_abierta || '').trim().toUpperCase() !== 'SI') {
     return { ok: false, error: 'Las inscripciones están cerradas.' };
   }
+  if (inscripcionesCerradas_(new Date(), config.cierre)) {
+    return { ok: false, error: mensajeCierre_(config.cierre) };
+  }
   var turnos = leerTurnos_();
-
-  // Gating de fase 1 (token + taller + declaración + Prioridad si tiene
-  // filas) -- fuera del lock, igual que Config/Turnos: no es algo que se
-  // dispute por concurrencia. En fase 2 esto es un no-op (ver
-  // validarSolicitudFase_) y no se lee la hoja Prioridad de más.
-  var fase = normalizarFase_(config.fase);
-  var tokensPorTaller = { PRN: config.token_PRN, ECO: config.token_ECO, COM: config.token_COM, SOC: config.token_SOC };
-  var prioridad = fase === 1 ? leerPrioridad_() : [];
-  var resultadoFase = validarSolicitudFase_(config.fase, params.t, solicitud.turnoIds, params.declaracion, solicitud.dni, solicitud.email, tokensPorTaller, prioridad);
-  if (!resultadoFase.ok) return resultadoFase;
 
   var lock = LockService.getScriptLock();
   var pudoTomarLock = lock.tryLock(30000);
@@ -979,13 +969,13 @@ function accionInscribir(params) {
       var ahora = new Date();
       var filasNuevas = evaluacion.inscriptos.map(function (ins, k) {
         var id = generarIdInscripcion_(k);
-        nuevasFormateadas.push({ id_inscripcion: id, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula });
+        nuevasFormateadas.push({ id_inscripcion: id, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula, letra: ins.letra });
         return [
           id, ahora,
           comoTexto_(solicitud.dni), comoTexto_(solicitud.email), comoTexto_(solicitud.nombre), comoTexto_(solicitud.apellido),
           comoTexto_(solicitud.profesion), comoTexto_(solicitud.institucion), comoTexto_(solicitud.provincia), comoTexto_(solicitud.celular),
           comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
-          'ACTIVA', '', fase
+          'ACTIVA', '', '', comoTexto_(ins.letra)
         ];
       });
       sheet.getRange(sheet.getLastRow() + 1, 1, filasNuevas.length, INSCRIPCIONES_HEADERS.length).setValues(filasNuevas);
@@ -1107,10 +1097,15 @@ function esDniDePrueba_(dni) {
 
 // ================== MAILS ==================
 
+var NOMBRE_EVENTO = 'Encuentro Nacional Innovación y Nuevas Tecnologías en Donación y Trasplante';
+var NOMBRE_EVENTO_FECHA_LUGAR = NOMBRE_EVENTO + ' — 14 y 15 de octubre 2026 · Centro Cultural de la Ciencia';
+var FOOTER_MAIL_ = '<p style="color:#777;font-size:13px;">Comité Organizador – ' + NOMBRE_EVENTO + '</p>';
+
 function tablaHtmlTurnos_(lista) {
   var filas = lista.map(function (t) {
+    var etiquetaTaller = t.letra ? 'Taller ' + t.letra + ' · ' + escapeHtml_(t.taller) : escapeHtml_(t.taller);
     return '<tr>' +
-      '<td style="padding:8px;border-bottom:1px solid #eee;">' + escapeHtml_(t.taller) + '</td>' +
+      '<td style="padding:8px;border-bottom:1px solid #eee;">' + etiquetaTaller + '</td>' +
       '<td style="padding:8px;border-bottom:1px solid #eee;">' + fechaLarga_(t.fecha) + '</td>' +
       '<td style="padding:8px;border-bottom:1px solid #eee;">' + escapeHtml_(t.horario) + '</td>' +
       '<td style="padding:8px;border-bottom:1px solid #eee;">' + escapeHtml_(t.aula) + '</td>' +
@@ -1133,35 +1128,35 @@ function escapeHtml_(s) {
 }
 
 function armarMailInscripcion_(nombre, mis, urlApp) {
-  var asunto = 'Recibimos tu inscripción – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var asunto = 'Tu inscripción está confirmada – ' + NOMBRE_EVENTO;
   var lineaAnular = urlApp
-    ? '<p>Si por algún motivo no podés asistir, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar el cupo.</p>'
-    : '<p>Si por algún motivo no podés asistir, anulá tu inscripción desde la misma página donde te inscribiste, para liberar el cupo.</p>';
+    ? '<p>Si no podés concurrir, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar la vacante para otra persona.</p>'
+    : '<p>Si no podés concurrir, anulá tu inscripción desde la misma página donde te inscribiste, para liberar la vacante para otra persona.</p>';
   var cuerpo =
     '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
     '<h2 style="color:' + COLOR_AZUL + ';">Hola ' + escapeHtml_(nombre) + ':</h2>' +
-    '<p>¡Estamos muy felices de contar con vos! Recibimos tu solicitud de inscripción a los siguientes talleres:</p>' +
+    '<p>¡Estamos muy felices de contar con vos! Tu inscripción quedó confirmada en los siguientes talleres:</p>' +
     tablaHtmlTurnos_(mis) +
-    '<p>Tu inscripción será confirmada por este medio.</p>' +
     '<p>Te pedimos un compromiso: los cupos son muy limitados y cada lugar que queda vacío es un lugar que otra persona no pudo ocupar. Al inscribirte, te comprometés a asistir en el turno asignado.</p>' +
     lineaAnular +
-    '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">14 y 15 de octubre de 2026 · Centro Cultural de la Ciencia · Auditorio</p>' +
-    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">' + NOMBRE_EVENTO_FECHA_LUGAR + '</p>' +
+    FOOTER_MAIL_ +
     '</div>';
   return { asunto: asunto, cuerpo: cuerpo };
 }
 
 function armarMailAnulacion_(nombre, anulado, mis) {
-  var asunto = 'Confirmamos la anulación de tu inscripción – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var asunto = 'Confirmamos la anulación de tu inscripción – ' + NOMBRE_EVENTO;
+  var etiquetaAnulado = anulado.letra ? 'Taller ' + anulado.letra + ' · ' + escapeHtml_(anulado.taller) : escapeHtml_(anulado.taller);
   var restoHtml = mis.length > 0
     ? '<p>Seguís con estas inscripciones activas:</p>' + tablaHtmlTurnos_(mis)
     : '<p>No tenés inscripciones activas.</p>';
   var cuerpo =
     '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
     '<h2 style="color:' + COLOR_AZUL + ';">Hola ' + escapeHtml_(nombre) + ':</h2>' +
-    '<p>Confirmamos que anulamos tu inscripción a <strong>' + escapeHtml_(anulado.taller) + '</strong> (' + fechaLarga_(anulado.fecha) + ', ' + escapeHtml_(anulado.horario) + ').</p>' +
+    '<p>Confirmamos que anulamos tu inscripción a <strong>' + etiquetaAnulado + '</strong> (' + fechaLarga_(anulado.fecha) + ', ' + escapeHtml_(anulado.horario) + ').</p>' +
     restoHtml +
-    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    FOOTER_MAIL_ +
     '</div>';
   return { asunto: asunto, cuerpo: cuerpo };
 }
@@ -1169,22 +1164,23 @@ function armarMailAnulacion_(nombre, anulado, mis) {
 /** Solo para "Mover" desde el Panel admin -- distinto del mail de
  * inscripción nueva para no confundir ("parece una inscripción nueva"). */
 function armarMailMovimiento_(nombre, cambio, mis, urlApp) {
-  var asunto = 'Tu turno fue modificado – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var asunto = 'Tu turno fue modificado – ' + NOMBRE_EVENTO;
+  var etiquetaTallerCambio = cambio.letraAhora ? 'Taller ' + cambio.letraAhora + ' · ' + escapeHtml_(cambio.taller) : escapeHtml_(cambio.taller);
   var lineaAnular = urlApp
     ? '<p>Si no podés asistir en este nuevo horario, anulá tu inscripción desde <a href="' + escapeHtml_(urlApp) + '" style="color:' + COLOR_AZUL + ';">' + escapeHtml_(urlApp) + '</a> para liberar el cupo.</p>'
     : '<p>Si no podés asistir en este nuevo horario, anulá tu inscripción desde la misma página donde te inscribiste, para liberar el cupo.</p>';
   var cuerpo =
     '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
     '<h2 style="color:' + COLOR_AZUL + ';">Hola ' + escapeHtml_(nombre) + ':</h2>' +
-    '<p>Te informamos que el Comité Organizador modificó tu turno en el taller <strong>' + escapeHtml_(cambio.taller) + '</strong>:</p>' +
+    '<p>Te informamos que el Comité Organizador modificó tu turno en el taller <strong>' + etiquetaTallerCambio + '</strong>:</p>' +
     '<p><strong>Antes:</strong> ' + fechaLarga_(cambio.fechaAntes) + ' de ' + escapeHtml_(cambio.horarioAntes) + ' (' + escapeHtml_(cambio.aulaAntes) + ')</p>' +
     '<p><strong>Ahora:</strong> ' + fechaLarga_(cambio.fechaAhora) + ' de ' + escapeHtml_(cambio.horarioAhora) + ' (' + escapeHtml_(cambio.aulaAhora) + ')</p>' +
     '<p>Estas son todas tus inscripciones activas actualizadas:</p>' +
     tablaHtmlTurnos_(mis) +
     '<p>Te recordamos que los cupos son limitados.</p>' +
     lineaAnular +
-    '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">14 y 15 de octubre de 2026 · Centro Cultural de la Ciencia · Auditorio</p>' +
-    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    '<p style="color:' + COLOR_DORADO + ';font-weight:bold;">' + NOMBRE_EVENTO_FECHA_LUGAR + '</p>' +
+    FOOTER_MAIL_ +
     '</div>';
   return { asunto: asunto, cuerpo: cuerpo };
 }
@@ -1423,14 +1419,14 @@ function accionPanelMover_(idInscripcion, turnoDestinoId, config, turnos) {
             comoTexto_(original.dni), comoTexto_(original.email), comoTexto_(original.nombre), comoTexto_(original.apellido),
             comoTexto_(original.profesion), comoTexto_(original.institucion), comoTexto_(original.provincia), comoTexto_(original.celular),
             comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
-            'ACTIVA', '', original.fase // se preserva la fase original: es un cambio de turno, no una inscripción nueva.
+            'ACTIVA', '', '', comoTexto_(ins.letra)
           ]]);
           SpreadsheetApp.flush();
 
           var misActivas = inscripciones
             .filter(function (i) { return i.dni === original.dni && i.email === original.email && i.estado === 'ACTIVA' && i.id_inscripcion !== idInscripcion; })
             .map(formatearInscripcionSalida_)
-            .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula }]);
+            .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula, letra: ins.letra }]);
 
           resultado = { ok: true, nuevoIdInscripcion: nuevoId, mensaje: '✅ Movido a ' + ins.turno_id + '.' };
           datosParaMail = {
@@ -1439,8 +1435,8 @@ function accionPanelMover_(idInscripcion, turnoDestinoId, config, turnos) {
             nombre: original.nombre,
             cambio: {
               taller: original.taller,
-              fechaAntes: original.fecha, horarioAntes: original.horario, aulaAntes: original.aula,
-              fechaAhora: ins.fecha, horarioAhora: ins.horario, aulaAhora: ins.aula
+              fechaAntes: original.fecha, horarioAntes: original.horario, aulaAntes: original.aula, letraAntes: original.letra,
+              fechaAhora: ins.fecha, horarioAhora: ins.horario, aulaAhora: ins.aula, letraAhora: ins.letra
             },
             mis: misActivas,
             config: config
@@ -1511,14 +1507,14 @@ function accionPanelAlta_(datos, config, turnos) {
           comoTexto_(solicitud.dni), comoTexto_(solicitud.email), comoTexto_(solicitud.nombre), comoTexto_(solicitud.apellido),
           comoTexto_(solicitud.profesion), comoTexto_(solicitud.institucion), comoTexto_(solicitud.provincia), comoTexto_(solicitud.celular),
           comoTexto_(ins.turno_id), comoTexto_(ins.taller), comoTexto_(ins.fecha), comoTexto_(ins.horario), comoTexto_(ins.aula),
-          'ACTIVA', '', 'admin'
+          'ACTIVA', '', 'admin', comoTexto_(ins.letra)
         ]]);
         SpreadsheetApp.flush();
 
         var misActivas = inscripciones
           .filter(function (i) { return i.dni === solicitud.dni && i.email === solicitud.email && i.estado === 'ACTIVA'; })
           .map(formatearInscripcionSalida_)
-          .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula }]);
+          .concat([{ id_inscripcion: nuevoId, turno_id: ins.turno_id, taller: ins.taller, fecha: ins.fecha, horario: ins.horario, aula: ins.aula, letra: ins.letra }]);
 
         resultado = { ok: true, nuevoIdInscripcion: nuevoId, mensaje: '✅ Inscripto/a en ' + ins.turno_id + '.' };
         datosParaMail = { solicitud: solicitud, mis: misActivas, config: config };
@@ -1665,7 +1661,8 @@ function escribirResumen_(hoja, turnos, activas) {
     var ocupados = activas.filter(function (i) { return i.turno_id === t.id; }).length;
     var disponibles = Math.max(t.cupo - ocupados, 0);
     var pct = t.cupo > 0 ? ocupados / t.cupo : 0;
-    return [t.taller, '', '', '', t.aula, fechaCorta_(t.fecha) + ' ' + t.inicio + '-' + t.fin, ocupados, t.cupo, disponibles, pct, barraTexto_(pct)];
+    var etiquetaTaller = t.letra ? 'Taller ' + t.letra + ' · ' + t.taller : t.taller;
+    return [etiquetaTaller, '', '', '', t.aula, fechaCorta_(t.fecha) + ' ' + t.inicio + '-' + t.fin, ocupados, t.cupo, disponibles, pct, barraTexto_(pct)];
   });
   if (filas.length === 0) return;
 
@@ -1726,7 +1723,8 @@ function escribirListado_(hoja, turnos, activas, pendiente) {
 
   var filas = filtradas.map(function (i) {
     var mensaje = pendiente && pendiente.idInscripcion === i.id_inscripcion ? pendiente.mensaje : '';
-    return [i.apellido, i.nombre, i.dni, i.email, i.celular, i.institucion, i.taller, i.turno_id, i.horario, '', mensaje, i.id_inscripcion];
+    var etiquetaTaller = i.letra ? 'Taller ' + i.letra + ' · ' + i.taller : i.taller;
+    return [i.apellido, i.nombre, i.dni, i.email, i.celular, i.institucion, etiquetaTaller, i.turno_id, i.horario, '', mensaje, i.id_inscripcion];
   });
   hoja.getRange(PANEL_FILA_LISTADO_DATOS, 1, filas.length, 12).setValues(filas);
 
@@ -1755,12 +1753,12 @@ function probarMail() {
   var config = leerConfig_();
   console.log('Cuota diaria restante: ' + MailApp.getRemainingDailyQuota());
   console.log('Cuenta que ejecuta el script: ' + Session.getEffectiveUser().getEmail());
-  var asunto = 'Prueba de envío – Talleres 1era Jornada Nacional de Donación y Trasplante';
+  var asunto = 'Prueba de envío – ' + NOMBRE_EVENTO;
   var cuerpo =
     '<div style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">' +
     '<h2 style="color:' + COLOR_AZUL + ';">Mail de prueba</h2>' +
     '<p>Si recibiste esto, el envío de mails desde el script está funcionando.</p>' +
-    '<p style="color:#777;font-size:13px;">Comité Organizador – 1era Jornada Nacional de Donación y Trasplante INCUCAI</p>' +
+    FOOTER_MAIL_ +
     '</div>';
   MailApp.sendEmail('gellinegarcia@gmail.com', asunto, textoPlano_(cuerpo), opcionesMail_(cuerpo, config));
   console.log('sendEmail no lanzó excepción: el envío salió del lado de Apps Script.');
@@ -1781,6 +1779,84 @@ function limpiarPruebas() {
   }
 }
 
+// ================== MIGRACIÓN A LA VERSIÓN UNIFICADA (octubre) ==================
+
+/**
+ * Correr UNA sola vez, a mano, desde el editor de Apps Script. Pasos:
+ * 1. Backup (solo valores) de Turnos e Inscripciones -- antes de tocar nada.
+ * 2. Reemplaza Turnos por los 12 definitivos (A-L, ver TURNOS_DEFINITIVOS).
+ * 3. Vacía Inscripciones y ColaMails (quedan los encabezados).
+ * 4. Actualiza Config: nombre_remitente, cierre. ('fase'/token_* de una
+ *    instalación vieja, si quedaron, no se tocan -- ya no los lee ningún
+ *    código, quedan inertes.)
+ * 5. Regenera el Panel.
+ * Al final deja en el log cuántas filas se movieron a cada backup.
+ */
+function migrarOctubre() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sello = Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmm');
+
+  var filasBackupTurnos = copiarHojaABackup_(ss, SHEET_TURNOS, 'Backup Turnos ' + sello);
+  var filasBackupInscripciones = copiarHojaABackup_(ss, SHEET_INSCRIPCIONES, 'Backup Inscripciones ' + sello);
+
+  var hojaTurnos = ss.getSheetByName(SHEET_TURNOS);
+  hojaTurnos.getRange(2, 1, Math.max(hojaTurnos.getMaxRows() - 1, 1), TURNOS_HEADERS.length).clearContent();
+  hojaTurnos.getRange(2, 1, TURNOS_DEFINITIVOS.length, TURNOS_HEADERS.length).setValues(TURNOS_DEFINITIVOS);
+
+  vaciarDatos_(ss, SHEET_INSCRIPCIONES);
+  vaciarDatos_(ss, SHEET_COLA_MAILS);
+
+  escribirConfig_(ss, 'nombre_remitente', 'Comité Organizador – ' + NOMBRE_EVENTO);
+  escribirConfig_(ss, 'cierre', '2026-10-06 12:00');
+
+  ocultarHojasInternas_(ss); // oculta los 2 backups recién creados (nombre contiene "Backup").
+  regenerarPanel_();
+
+  console.log('Backup Turnos: ' + filasBackupTurnos + ' filas de datos movidas a "Backup Turnos ' + sello + '".');
+  console.log('Backup Inscripciones: ' + filasBackupInscripciones + ' filas de datos movidas a "Backup Inscripciones ' + sello + '".');
+  console.log('Turnos reemplazados por los ' + TURNOS_DEFINITIVOS.length + ' definitivos (A-L).');
+  console.log('Inscripciones y ColaMails vaciadas (quedan los encabezados).');
+  console.log('Config actualizada: nombre_remitente, cierre = 2026-10-06 12:00.');
+  console.log('Panel regenerado.');
+}
+
+/** Copia TODOS los valores (encabezado + datos) de `nombreOrigen` a una
+ * hoja nueva `nombreBackup`, tal cual están (solo valores, sin fórmulas).
+ * Devuelve la cantidad de filas de DATOS copiadas (sin contar encabezado). */
+function copiarHojaABackup_(ss, nombreOrigen, nombreBackup) {
+  var origen = ss.getSheetByName(nombreOrigen);
+  if (!origen) return 0;
+  var filas = origen.getLastRow();
+  var columnas = origen.getLastColumn();
+  if (filas === 0 || columnas === 0) return 0;
+  var valores = origen.getRange(1, 1, filas, columnas).getValues();
+  var backup = ss.insertSheet(nombreBackup);
+  backup.getRange(1, 1, valores.length, valores[0].length).setValues(valores);
+  return Math.max(filas - 1, 0);
+}
+
+/** Borra las filas de DATOS de una hoja (deja el encabezado de la fila 1 intacto). */
+function vaciarDatos_(ss, nombreHoja) {
+  var hoja = ss.getSheetByName(nombreHoja);
+  if (!hoja || hoja.getLastRow() <= 1) return;
+  hoja.getRange(2, 1, hoja.getLastRow() - 1, hoja.getLastColumn()).clearContent();
+}
+
+/** Escribe (o crea, si no existía) una clave en Config. */
+function escribirConfig_(ss, clave, valor) {
+  var hoja = ss.getSheetByName(SHEET_CONFIG);
+  var n = Math.max(hoja.getLastRow() - 1, 0);
+  var filaEncontrada = -1;
+  if (n > 0) {
+    var claves = hoja.getRange(2, 1, n, 1).getValues();
+    for (var i = 0; i < claves.length; i++) {
+      if (String(claves[i][0]).trim() === clave) { filaEncontrada = i + 2; break; }
+    }
+  }
+  if (filaEncontrada === -1) filaEncontrada = hoja.getLastRow() + 1;
+  hoja.getRange(filaEncontrada, 1, 1, 2).setValues([[clave, valor]]);
+}
+
 // ================== EXPORT PARA TESTS EN NODE ==================
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -1792,9 +1868,8 @@ if (typeof module !== 'undefined' && module.exports) {
     resolverTurnoDeInscripcion_: resolverTurnoDeInscripcion_,
     normalizarDni_: normalizarDni_,
     normalizarEmail_: normalizarEmail_,
-    normalizarFase_: normalizarFase_,
-    resolverPrefijoToken_: resolverPrefijoToken_,
-    validarFase1_: validarFase1_,
-    validarSolicitudFase_: validarSolicitudFase_
+    parsearFechaHoraArg_: parsearFechaHoraArg_,
+    inscripcionesCerradas_: inscripcionesCerradas_,
+    MAX_TALLERES_POR_PERSONA: MAX_TALLERES_POR_PERSONA
   };
 }

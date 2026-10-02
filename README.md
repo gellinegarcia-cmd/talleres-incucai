@@ -1,27 +1,35 @@
-# Talleres — 1era Jornada Nacional de Donación y Trasplante INCUCAI
+# Talleres — Encuentro Nacional Innovación y Nuevas Tecnologías en Donación y Trasplante
 
 App de inscripción a talleres simultáneos (14 y 15 de octubre 2026, Centro
 Cultural de la Ciencia). Frontend estático (GitHub Pages) + backend Google
 Apps Script (Web App) + Google Sheets como base de datos. Sin frameworks,
 sin build. Zona horaria `America/Argentina/Buenos_Aires` en todo.
 
-## ESTADO AL 27/09
+## ESTADO AL 02/10
 
-Proyecto pausado en este punto. Resumen para retomar.
+Versión unificada: **un solo link, sin fases ni tokens**. Reemplaza por
+completo el esquema de fase 1 (prioritaria, por token) que describía esta
+sección hasta el 27/09.
 
 **En producción:**
 
-- **Fase 1 activa** (`Config!fase = 1`): la inscripción pública general
-  está cerrada. Solo entra gente con un link que incluye `?t=<token>` de
-  su taller (`token_PRN`, `token_ECO`, `token_COM`, `token_SOC` en
-  `Config`). Sin token válido, la app muestra el mensaje de
-  `Config!mensaje_fase1` y no ofrece formulario.
-- **4 links con token**, uno por taller (PRN/ECO/COM/SOC). Los tokens
-  están únicamente en la hoja `Config` de la planilla — **no están en
-  este repo ni en ningún commit** (son secretos: cualquiera con el link
-  correcto se inscribe en ese taller sin pasar por la lista de
-  preasignados si la hoja `Prioridad` está vacía). Para reobtenerlos:
-  abrir `Config` en la planilla y copiar los valores de esas 4 claves.
+- **Un solo link para todos**, sin `?t=...` ni preasignación. El concepto
+  de fase 1/tokens/"Inscripción prioritaria" se sacó del flujo visible;
+  un link viejo con `?t=...` muestra exactamente lo mismo que el link
+  general (el parámetro se ignora).
+- **Tope de 2 talleres por persona** (antes no había tope, solo "no
+  repetir el mismo taller"). Se valida en `validar()` — una sola fuente
+  de verdad para self-service, alta manual y mover desde el Panel.
+- **12 turnos definitivos, letras A-L** (reemplazan los 13 anteriores,
+  numerados 1-4 por taller). Ver `TURNOS_DEFINITIVOS` en `Code.gs`. Cada
+  turno tiene además una columna `letra` (en Turnos e Inscripciones,
+  agregada al final para no romper las fórmulas de Resumen/hojas de
+  taller/Por persona, que referencian columnas A..G/A..R por letra fija).
+- **Cierre automático** (`Config!cierre`, formato `YYYY-MM-DD HH:MM` hora
+  Argentina): pasada esa fecha/hora, el servidor rechaza inscripciones
+  nuevas y la app muestra el mensaje de cierre en vez del formulario.
+  Anular sigue funcionando después del cierre (libera cupo); el Panel
+  (alta manual y mover) también sigue funcionando — es el admin.
 - **Panel compartido con el jefe del comité** (hoja `Panel`, primera
   pestaña): ve cupos, da de baja, mueve de turno y da altas manuales.
   Solo esa hoja es editable para él — el resto de las hojas de datos
@@ -30,6 +38,8 @@ Proyecto pausado en este punto. Resumen para retomar.
   pendiente o con error) queda registrado ahí con estado
   `ENVIADO`/`PENDIENTE`/`ERROR`. Correr `probarMail()` en el editor si
   hace falta diagnosticar un problema de envío puntual.
+- La hoja `Prioridad` sigue existiendo (no se borró, por si queda algo
+  cargado de antes) pero ya no la lee ningún código.
 
 **URLs y despliegue:**
 
@@ -40,26 +50,27 @@ Proyecto pausado en este punto. Resumen para retomar.
 - Regla de deploy: **`clasp push` y después `clasp deploy -i <deploymentId>` — nunca `clasp deploy` sin `-i`** (crea una URL nueva y
   rompe el frontend, que tiene la URL vieja hardcodeada).
 
+**Migración (una sola vez):** correr `migrarOctubre()` desde el editor de
+Apps Script -- hace backup de Turnos/Inscripciones (hojas nuevas
+`Backup ...`, quedan ocultas), reemplaza Turnos por los 12 definitivos,
+vacía Inscripciones/ColaMails (quedan los encabezados), actualiza
+`Config!nombre_remitente`/`Config!cierre`, y regenera el Panel. Ver
+"Migración a la versión unificada" más abajo.
+
 **PENDIENTES:**
 
-a. **Pasar la fase a 2** cuando venza la ventana de fase 1: cambiar
-   `Config!fase` de `1` a `2` a mano en la planilla (no hace falta
-   redeploy ni tocar código). En fase 2 la inscripción queda abierta a
-   cualquiera, sin token ni declaración, tal como se comporta hoy con
-   fase 1 vencida... salvo que hay que acordarse de hacerlo, no es
-   automático por fecha.
-b. **Mail de confirmación + recordatorio a todos los inscriptos**, a
+a. **Mail de confirmación + recordatorio a todos los inscriptos**, a
    mandar entre el **9 y el 12/10**, en tandas por el límite de
    ~100 mails/día de una cuenta Gmail común (`MailApp.getRemainingDailyQuota()`).
    No hay una función lista para esto todavía — cuando se retome, hay que
    escribir el envío masivo respetando ese límite diario (podría
    apoyarse en el mismo mecanismo de cola de `ColaMails`/`procesarCola`).
-c. **Confirmar horario y aula de "Acompañamiento social"** (`SOC-1` en
-   la hoja `Turnos`): quedó cargado como único turno del taller
-   (14:00-17:00, Aula B, 15/10, cupo 50) pero falta la confirmación
-   final del comité — si cambia, hay que actualizar esa fila en
-   `Turnos` (la hoja `Resumen` y el Panel se actualizan solos a partir
-   de ahí, no hace falta tocar código).
+b. **Confirmar horario y aula de "Cómo acompañar a los pacientes..."**
+   (`SOC-H` en la hoja `Turnos`): quedó cargado como único turno del
+   taller (14:00-17:00, Sala B, 15/10, cupo 50) pero falta la
+   confirmación final del comité — si cambia, hay que actualizar esa
+   fila en `Turnos` (la hoja `Resumen` y el Panel se actualizan solos a
+   partir de ahí, no hace falta tocar código).
 
 ## Estructura
 
@@ -97,8 +108,10 @@ Después de cada deploy, verificar que haya salido bien:
 curl -sL "https://script.google.com/macros/s/AKfycby3w-MGZTKiwp7rZK169t-0GQ7ebHvcbyAHyL_HVPbgovDNaALXWbWtf2gFOAs2Gob4mw/exec?action=turnos"
 ```
 
-Tiene que devolver JSON con `"ok":true` y un array `"turnos"` con 13
-elementos (`PRN-1..4`, `ECO-1..4`, `COM-1..4`, `SOC-1`).
+Tiene que devolver JSON con `"ok":true` y un array `"turnos"` con 12
+elementos (`PRN-A..D`, `COM-E`, `ECO-F..G`, `SOC-H`, `COM-I..J`, `ECO-K..L`).
+Un `?t=` con cualquier valor (o ninguno) tiene que devolver exactamente lo
+mismo -- el token ya no afecta nada.
 
 Requiere estar logueado una vez con `clasp login` (cuenta
 `jornadas.donacion.incucai@gmail.com` — elegirla en el navegador que abre
@@ -164,10 +177,11 @@ En la hoja `Config` de la planilla:
 
 | clave | qué poner |
 |---|---|
-| `inscripcion_abierta` | `SI` o `NO` |
+| `inscripcion_abierta` | `SI` o `NO` — apagado manual total (independiente del cierre por fecha) |
 | `nombre_remitente` | ya viene con el valor correcto, se puede editar |
 | `reply_to` | opcional — un email al que responder los mails automáticos |
 | `url_app` | la URL pública de GitHub Pages (ver paso siguiente) |
+| `cierre` | `YYYY-MM-DD HH:MM`, hora Argentina (ej: `2026-10-06 12:00`). Vacío = nunca cierra solo. |
 
 ## 5. Publicar el frontend en GitHub Pages
 
@@ -187,8 +201,10 @@ En la hoja `Config` de la planilla:
 node tests/logica.test.js
 ```
 
-Corre casos de duplicado, superposición horaria, cupo, ANULADAs, etc.
-contra la misma función `validar()` que usa el backend real.
+Corre casos de duplicado, superposición horaria, cupo, ANULADAs, tope de 2
+talleres por persona, mismo taller en distinto día, y cierre automático
+(antes/después de `Config!cierre`) -- todo contra la misma función
+`validar()`/`inscripcionesCerradas_()` que usa el backend real.
 
 ### Prueba de concurrencia (contra la URL ya desplegada)
 
@@ -196,10 +212,26 @@ contra la misma función `validar()` que usa el backend real.
 node tests/estres.js https://script.google.com/macros/s/AKfycb.../exec
 ```
 
-Dispara 80 inscripciones concurrentes al turno `PRN-1` (cupo 60) y verifica
+Dispara 80 inscripciones concurrentes al turno `PRN-A` (cupo 60) y verifica
 que el `LockService` haya serializado bien la escritura. **Corré esto antes
 de anunciar la inscripción** (o contra una copia de prueba de la planilla)
-— el chequeo final asume que `PRN-1` arranca en 0 ocupados.
+— el chequeo final asume que `PRN-A` arranca en 0 ocupados.
+
+## Migración a la versión unificada
+
+`migrarOctubre()` (en `Code.gs`) se corre UNA sola vez, a mano, desde el
+editor de Apps Script -- no tiene UI ni se dispara sola:
+
+1. Backup (solo valores) de `Turnos` e `Inscripciones` en hojas nuevas
+   `Backup Turnos <fecha_hora>` / `Backup Inscripciones <fecha_hora>`
+   (quedan ocultas automáticamente).
+2. Reemplaza `Turnos` por los 12 definitivos (A-L).
+3. Vacía `Inscripciones` y `ColaMails` (quedan los encabezados).
+4. Actualiza `Config!nombre_remitente` y `Config!cierre` (`2026-10-06 12:00`).
+5. Regenera el Panel.
+
+Al terminar, el log (`Ver` → `Registros de ejecución` en el editor) muestra
+cuántas filas de datos se movieron a cada backup.
 
 Al terminar, en el editor de Apps Script corré **`limpiarPruebas`** para
 borrar las filas de prueba (DNI que empieza con `99000`).

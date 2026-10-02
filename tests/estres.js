@@ -11,7 +11,7 @@
  * index.html (timeout 45s, backoff ~2,4,7,10,10s ±1.5s, chequeo de
  * action=mis antes de reintentar por timeout/error de red).
  *
- * Antes de arrancar, verifica que PRN-1 esté en 0 ocupados -- si no, FRENA
+ * Antes de arrancar, verifica que PRN-A esté en 0 ocupados -- si no, FRENA
  * (correr limpiarPruebas() en el editor de Apps Script primero).
  *
  * Criterio de éxito: exactamente 60 ACTIVAS, exactamente 20 rechazadas por
@@ -24,7 +24,7 @@ if (!API_URL) {
   process.exit(1);
 }
 
-const TURNO = 'PRN-1';
+const TURNO = 'PRN-A';
 const CANTIDAD = 80;
 const CUPO_ESPERADO = 60;
 const RECHAZADOS_ESPERADOS = 20;
@@ -133,7 +133,8 @@ async function inscribirUno(n) {
     provincia: 'Buenos Aires',
     celular: '1100000000',
     turnos: TURNO,
-    compromiso: 'SI'
+    compromiso: 'SI',
+    declaracion: 'SI'
   };
   const url = API_URL + '?' + param(datos);
 
